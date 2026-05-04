@@ -35,7 +35,6 @@ Only models that yield a **pure ODE** after discretisation are supported — cur
 
 - **ODE-type PyBaMM models** (SPMe, SPM) can be injected via the `model` parameter
 - **Any parameter set** can be used via `parameter_values` (defaults to `Chen2020`)
-- **Extra output variables** from PyBaMM are accessible via `block.extra_outputs`
 - **Immediate initialisation** — the PyBaMM model is discretised during block construction
 
 ```python
