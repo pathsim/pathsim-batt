@@ -1,6 +1,6 @@
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/pathsim/pathsim-batt/main/docs/source/logos/batt_logo.png" width="300" alt="PathSim-Batt Logo" />
+  <img src="https://raw.githubusercontent.com/pathsim/pathsim-batt/master/docs/source/logos/batt_logo.png" width="300" alt="PathSim-Batt Logo" />
 </p>
 
 <p align="center">
