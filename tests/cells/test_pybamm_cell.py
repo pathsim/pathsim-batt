@@ -1,6 +1,10 @@
 import unittest
 
+import numpy as np
 import pybamm
+from pathsim import Connection, Simulation
+from pathsim.blocks import Constant
+from pathsim.solvers import ESDIRK43
 
 from pathsim_batt.cells import (
     Cell,
@@ -33,12 +37,16 @@ class TestPorts(unittest.TestCase):
         self.assertIs(Cell, CellElectrothermal)
 
     def test_is_dynamic(self):
-        self.assertTrue(hasattr(CellElectrical, "initial_value"))
-        self.assertTrue(hasattr(CellElectrothermal, "initial_value"))
+        self.assertTrue(hasattr(CellElectrical(), "initial_value"))
+        self.assertTrue(hasattr(CellElectrothermal(), "initial_value"))
 
     def test_len_zero(self):
-        self.assertEqual(len(CellElectrical()), 0)
-        self.assertEqual(len(CellElectrothermal()), 0)
+        cell_e = CellElectrical()
+        cell_e.set_solver(ESDIRK43, None)
+        self.assertEqual(len(cell_e), 3)  # V, Q_heat, SOC
+        cell_et = CellElectrothermal()
+        cell_et.set_solver(ESDIRK43, None)
+        self.assertEqual(len(cell_et), 4)  # V, T, Q_heat, SOC
 
     def test_current_always_input(self):
         pv = pybamm.ParameterValues("Chen2020")
@@ -53,36 +61,95 @@ class TestPorts(unittest.TestCase):
         self.assertAlmostEqual(CellElectrical(initial_soc=0.5)._initial_soc, 0.5)
         self.assertAlmostEqual(CellElectrothermal(initial_soc=0.8)._initial_soc, 0.8)
 
-    def test_reset_clears_state(self):
+    def test_initial_value_is_numpy_array(self):
         for cls in (CellElectrical, CellElectrothermal):
             cell = cls()
-            cell._sim = object()
-            cell.reset()
-            self.assertIsNone(cell._sim)
+            self.assertIsInstance(cell.initial_value, np.ndarray)
+            self.assertGreater(len(cell.initial_value), 1)
 
+    def test_has_casadi_rhs(self):
+        """CasADi RHS is compiled and callable at construction time."""
+        for cls in (CellElectrical, CellElectrothermal):
+            cell = cls()
+            self.assertIsNotNone(cell._casadi_rhs)
 
-def _advance(cell, dt):
-    """Simulate one PathSim timestep: buffer → step → update."""
-    cell.buffer(dt)
-    cell.step(0.0, dt)
-    cell.update(dt)
+    def test_state_size_equals_differential_states_only(self):
+        """State must contain only differential (x) variables, not algebraic (z)."""
+        import pybamm as pb
+
+        for cls in (CellElectrical, CellElectrothermal):
+            cell = cls()
+            # Rebuild the same model to get the expected x size from PyBaMM
+            model = pb.lithium_ion.SPMe(options={"thermal": cell._thermal_option})
+            pv = cell._parameter_values.copy()
+            sim = pb.Simulation(
+                model,
+                parameter_values=pv,
+                solver=pb.CasadiSolver(mode="safe"),
+            )
+            sim.build(
+                initial_soc=cell._initial_soc,
+                inputs={
+                    "Current function [A]": 0.0,
+                    "Ambient temperature [K]": 298.15,
+                },
+            )
+            objs = sim.built_model.export_casadi_objects(
+                ["Terminal voltage [V]"],
+                input_parameter_order=[
+                    "Current function [A]",
+                    "Ambient temperature [K]",
+                ],
+            )
+            expected_x_size = objs["x"].numel()
+            self.assertEqual(len(cell.initial_value), expected_x_size)
+
+    def test_jac_dyn_is_square(self):
+        """jac_dyn must return a square (n×n) matrix where n is the state size."""
+        for cls in (CellElectrical, CellElectrothermal):
+            cell = cls()
+            n = len(cell.initial_value)
+            x = cell.initial_value
+            u = np.array([0.0, 298.15])
+            J = cell.jac_dyn(x, u, 0.0)
+            self.assertEqual(J.shape, (n, n))
+
+    def test_dfn_model_raises(self):
+        """DFN models (DAE after discretisation) must raise NotImplementedError."""
+        dfn = pybamm.lithium_ion.DFN(options={"thermal": "isothermal"})
+        with self.assertRaises(NotImplementedError):
+            CellElectrical(model=dfn)
+
+    def test_dfn_lumped_raises(self):
+        """DFN with lumped thermal also has algebraic variables and must raise."""
+        dfn = pybamm.lithium_ion.DFN(options={"thermal": "lumped"})
+        with self.assertRaises(NotImplementedError):
+            CellElectrothermal(model=dfn)
 
 
 class TestElectrical(unittest.TestCase):
-    """Integration tests for CellElectrical — runs PyBaMM."""
+    """Integration tests for CellElectrical — PathSim integrates the PyBaMM ODE."""
+
+    def _make_simulation(self, cell, current, T_cell):
+        """Create a Simulation with the cell and constant inputs."""
+        I_src = Constant(current)
+        T_src = Constant(T_cell)
+        return Simulation(
+            blocks=[I_src, T_src, cell],
+            connections=[
+                Connection(I_src, cell["I"]),
+                Connection(T_src, cell["T_cell"]),
+            ],
+            dt=1.0,
+            Solver=ESDIRK43,
+        )
 
     def setUp(self):
         self.cell = CellElectrical(initial_soc=1.0)
-        self.cell.inputs[0] = 1.0  # I
-        self.cell.inputs[1] = 298.15  # T_cell
-
-    def test_lazy_init_on_first_step(self):
-        self.assertIsNone(self.cell._sim)
-        _advance(self.cell, 1.0)
-        self.assertIsNotNone(self.cell._sim)
+        self.sim = self._make_simulation(self.cell, 1.0, 298.15)
 
     def test_outputs_in_range(self):
-        _advance(self.cell, 1.0)
+        self.sim.run(1)
         self.assertGreater(self.cell.outputs[0], 3.0)  # V
         self.assertLess(self.cell.outputs[0], 4.3)
         self.assertGreaterEqual(self.cell.outputs[1], 0.0)  # Q_heat
@@ -90,34 +157,47 @@ class TestElectrical(unittest.TestCase):
         self.assertLessEqual(self.cell.outputs[2], 1.0)
 
     def test_step_returns_success(self):
-        self.cell.set_solver(None, parent=None)
-        self.cell.buffer(1.0)
-        success, error, scale = self.cell.step(0.0, 1.0)
-        self.assertTrue(success)
+        self.sim.run(1)
+        # Simulation completed without error
+        self.assertIsNotNone(self.cell.outputs)
 
     def test_soc_decreases_on_discharge(self):
-        _advance(self.cell, 1.0)
+        self.sim.run(1)
         soc_0 = self.cell.outputs[2]
-        for _ in range(5):
-            _advance(self.cell, 60.0)
+        self.sim.run(60)
         self.assertLess(self.cell.outputs[2], soc_0)
+
+    def test_pathsim_state_advances(self):
+        """The PathSim engine state changes after a step (not a stub)."""
+        self.sim.run(1)
+        state_before = self.cell.engine.state.copy()
+        self.sim.run(2)
+        self.assertFalse(np.allclose(self.cell.engine.state, state_before))
 
 
 class TestElectrothermal(unittest.TestCase):
-    """Integration tests for CellElectrothermal — runs PyBaMM."""
+    """Integration tests for CellElectrothermal — PathSim integrates the PyBaMM ODE."""
+
+    def _make_simulation(self, cell, current, T_amb):
+        """Create a Simulation with the cell and constant inputs."""
+        I_src = Constant(current)
+        T_src = Constant(T_amb)
+        return Simulation(
+            blocks=[I_src, T_src, cell],
+            connections=[
+                Connection(I_src, cell["I"]),
+                Connection(T_src, cell["T_amb"]),
+            ],
+            dt=1.0,
+            Solver=ESDIRK43,
+        )
 
     def setUp(self):
         self.cell = CellElectrothermal(initial_soc=1.0)
-        self.cell.inputs[0] = 1.0  # I
-        self.cell.inputs[1] = 298.15  # T_amb
-
-    def test_lazy_init_on_first_step(self):
-        self.assertIsNone(self.cell._sim)
-        _advance(self.cell, 1.0)
-        self.assertIsNotNone(self.cell._sim)
+        self.sim = self._make_simulation(self.cell, 1.0, 298.15)
 
     def test_outputs_in_range(self):
-        _advance(self.cell, 1.0)
+        self.sim.run(1)
         self.assertGreater(self.cell.outputs[0], 3.0)  # V
         self.assertLess(self.cell.outputs[0], 4.3)
         self.assertGreater(self.cell.outputs[1], 250.0)  # T
@@ -127,17 +207,22 @@ class TestElectrothermal(unittest.TestCase):
         self.assertLessEqual(self.cell.outputs[3], 1.0)
 
     def test_step_returns_success(self):
-        self.cell.set_solver(None, parent=None)
-        self.cell.buffer(1.0)
-        success, error, scale = self.cell.step(0.0, 1.0)
-        self.assertTrue(success)
+        self.sim.run(1)
+        # Simulation completed without error
+        self.assertIsNotNone(self.cell.outputs)
 
     def test_soc_decreases_on_discharge(self):
-        _advance(self.cell, 1.0)
+        self.sim.run(1)
         soc_0 = self.cell.outputs[3]
-        for _ in range(5):
-            _advance(self.cell, 60.0)
+        self.sim.run(60)
         self.assertLess(self.cell.outputs[3], soc_0)
+
+    def test_pathsim_state_advances(self):
+        """The PathSim engine state changes after a step (not a stub)."""
+        self.sim.run(1)
+        state_before = self.cell.engine.state.copy()
+        self.sim.run(2)
+        self.assertFalse(np.allclose(self.cell.engine.state, state_before))
 
 
 if __name__ == "__main__":

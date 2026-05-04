@@ -21,25 +21,27 @@ PathSim-Batt extends the [PathSim](https://github.com/pathsim/pathsim) simulatio
 
 | Block | Description | Key Parameters |
 |-------|-------------|----------------|
-| `CellElectrothermal` | Coupled electrical + thermal cell (PyBaMM owns temperature ODE) | `model`, `parameter_values`, `initial_soc` |
-| `CellElectrical` | Electrical only, isothermal (PathSim owns temperature ODE) | `model`, `parameter_values`, `initial_soc` |
+| `CellElectrothermal` | Coupled electrical + thermal cell (PathSim integrates PyBaMM ODE incl. temperature) | `model`, `parameter_values`, `initial_soc` |
+| `CellElectrical` | Electrical only, isothermal; wire to `LumpedThermal` for external thermal coupling | `model`, `parameter_values`, `initial_soc` |
 | `LumpedThermal` | Single-node thermal model for external thermal coupling | `mass`, `Cp`, `UA`, `T0` |
 
 `Cell` is an alias for `CellElectrothermal`.
 
 ## PyBaMM integration
 
-The cell blocks wrap [PyBaMM](https://pybamm.org) models behind the PathSim block interface. PyBaMM handles the electrochemistry (SPMe, DFN, ...) while PathSim handles the system-level simulation loop, connections, and time stepping.
+The cell blocks wrap [PyBaMM](https://pybamm.org) models behind the PathSim block interface. PyBaMM discretises the electrochemistry equations at construction time, then PathSim's numerical integrator advances the state vector using the exported ODE right-hand side.
 
-- **Any PyBaMM model** can be injected via the `model` parameter
+Only models that yield a **pure ODE** after discretisation are supported — currently SPMe and SPM. Models such as DFN that produce a DAE system (algebraic variables) will raise `NotImplementedError` at construction time.
+
+- **ODE-type PyBaMM models** (SPMe, SPM) can be injected via the `model` parameter
 - **Any parameter set** can be used via `parameter_values` (defaults to `Chen2020`)
 - **Extra output variables** from PyBaMM are accessible via `block.extra_outputs`
-- **Lazy initialisation** — the PyBaMM simulation is only built on the first timestep
+- **Immediate initialisation** — the PyBaMM model is discretised during block construction
 
 ```python
 import pybamm
 
-model  = pybamm.lithium_ion.DFN(options={"thermal": "lumped"})
+model  = pybamm.lithium_ion.SPMe(options={"thermal": "lumped"})
 params = pybamm.ParameterValues("Mohtat2020")
 cell   = CellElectrothermal(model=model, parameter_values=params)
 ```

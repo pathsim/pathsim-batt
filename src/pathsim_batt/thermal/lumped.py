@@ -7,14 +7,13 @@
 ##
 #########################################################################################
 
-# IMPORTS ===============================================================================
+# IMPORTS ==============================================================================
 
 import numpy as np
-
 from pathsim.blocks import DynamicalSystem
 
+# BLOCKS ===============================================================================
 
-# BLOCKS ================================================================================
 
 class LumpedThermal(DynamicalSystem):
     """Single-node lumped thermal model.
@@ -48,8 +47,7 @@ class LumpedThermal(DynamicalSystem):
     output_port_labels = {"T": 0}
 
     def __init__(self, mass=0.065, Cp=750.0, UA=0.5, T0=298.15):
-
-        #input validation
+        # input validation
         if mass <= 0:
             raise ValueError(f"'mass' must be positive but is {mass}")
         if Cp <= 0:
@@ -57,13 +55,13 @@ class LumpedThermal(DynamicalSystem):
         if UA < 0:
             raise ValueError(f"'UA' must be non-negative but is {UA}")
 
-        #store parameters
+        # store parameters
         self.mass = float(mass)
         self.Cp = float(Cp)
         self.UA = float(UA)
 
         def _fn_d(x, u, t):
-            T, = x
+            (T,) = x
             Q_dot, T_amb = u
             return np.array([(Q_dot - self.UA * (T - T_amb)) / (self.mass * self.Cp)])
 
