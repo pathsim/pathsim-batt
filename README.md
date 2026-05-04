@@ -1,9 +1,14 @@
 
 <p align="center">
+  <img src="https://raw.githubusercontent.com/pathsim/pathsim-batt/main/docs/source/logos/batt_logo.png" width="300" alt="PathSim-Batt Logo" />
+</p>
+
+<p align="center">
   <strong>Battery simulation blocks for PathSim</strong>
 </p>
 
 <p align="center">
+  <a href="https://pypi.org/project/pathsim-batt/"><img src="https://img.shields.io/pypi/v/pathsim-batt" alt="PyPI"></a>
   <img src="https://img.shields.io/github/license/pathsim/pathsim-batt" alt="License">
 </p>
 
@@ -16,6 +21,12 @@
 ---
 
 PathSim-Batt extends the [PathSim](https://github.com/pathsim/pathsim) simulation framework with battery cell blocks using [PyBaMM](https://pybamm.org) as the electrochemical backend. All blocks follow the standard PathSim block interface and can be connected into simulation diagrams.
+
+## Install
+
+```bash
+pip install pathsim-batt
+```
 
 ## Blocks
 
@@ -51,12 +62,6 @@ cell   = CellElectrothermal(model=model, parameter_values=params)
 |---|---|---|---|
 | Internal | `CellElectrothermal` | PyBaMM | Single-cell simulations, quick setup |
 | External | `CellElectrical` + `LumpedThermal` | PathSim | Multi-cell packs, custom cooling models |
-
-## Install
-
-```bash
-pip install pathsim-batt
-```
 
 ## License
 
