@@ -48,11 +48,8 @@ class _CellBase(DynamicalSystem):
         parameter_values,
         initial_soc,
         pybamm_solver,
-        output_variables,
     ):
         self._initial_soc = float(initial_soc)
-        self._extra_var_names = list(output_variables or [])
-        self.extra_outputs = {}
 
         if model is None:
             model = pybamm.lithium_ion.SPMe(options={"thermal": self._thermal_option})
@@ -77,11 +74,7 @@ class _CellBase(DynamicalSystem):
         )
         sim.build(initial_soc=self._initial_soc, inputs=_build_inputs)
 
-        all_out_vars = (
-            self._pybamm_output_vars
-            + ["Discharge capacity [A.h]"]
-            + self._extra_var_names
-        )
+        all_out_vars = self._pybamm_output_vars + ["Discharge capacity [A.h]"]
         input_order = ["Current function [A]", "Ambient temperature [K]"]
         casadi_objs = sim.built_model.export_casadi_objects(
             all_out_vars, input_parameter_order=input_order
@@ -160,19 +153,6 @@ class _CellBase(DynamicalSystem):
 
     def reset(self):
         super().reset()
-        self.extra_outputs = {}
-
-    def update(self, t):
-        """Evaluate output equation and populate ``extra_outputs``."""
-        super().update(t)
-        if self._extra_var_names:
-            x = self.engine.state
-            u = self.inputs.to_array()
-            xv = casadi.DM(x.reshape(-1, 1))
-            p = casadi.DM([float(u[0]), float(u[1])])
-            for name in self._extra_var_names:
-                val = np.array(self._out_var_fcns[name](t, xv, p)).squeeze()
-                self.extra_outputs[name] = float(val) if val.ndim == 0 else val
 
 
 class CellElectrical(_CellBase):
@@ -194,9 +174,6 @@ class CellElectrical(_CellBase):
     pybamm_solver : pybamm.BaseSolver or None
         PyBaMM solver used only during model build / discretisation.
         Defaults to ``CasadiSolver(mode="safe")``.
-    output_variables : list[str] or None
-        Extra PyBaMM variable names stored in ``block.extra_outputs`` after
-        each step.
 
     Inputs
     ------
@@ -225,15 +202,8 @@ class CellElectrical(_CellBase):
         parameter_values=None,
         initial_soc=1.0,
         pybamm_solver=None,
-        output_variables=None,
     ):
-        super().__init__(
-            model,
-            parameter_values,
-            initial_soc,
-            pybamm_solver,
-            output_variables,
-        )
+        super().__init__(model, parameter_values, initial_soc, pybamm_solver)
 
 
 class CellElectrothermal(_CellBase):
@@ -256,9 +226,6 @@ class CellElectrothermal(_CellBase):
     pybamm_solver : pybamm.BaseSolver or None
         PyBaMM solver used only during model build / discretisation.
         Defaults to ``CasadiSolver(mode="safe")``.
-    output_variables : list[str] or None
-        Extra PyBaMM variable names stored in ``block.extra_outputs`` after
-        each step.
 
     Inputs
     ------
@@ -289,15 +256,8 @@ class CellElectrothermal(_CellBase):
         parameter_values=None,
         initial_soc=1.0,
         pybamm_solver=None,
-        output_variables=None,
     ):
-        super().__init__(
-            model,
-            parameter_values,
-            initial_soc,
-            pybamm_solver,
-            output_variables,
-        )
+        super().__init__(model, parameter_values, initial_soc, pybamm_solver)
 
 
 Cell = CellElectrothermal
