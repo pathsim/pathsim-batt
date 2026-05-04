@@ -163,6 +163,11 @@ class CellElectrical(_CellBase):
     ``LumpedThermal`` (or similar) block and feed its temperature output
     back to ``T_cell``.
 
+    .. note::
+        The SPMe/SPM ODE is stiff.  Use an implicit solver (e.g.
+        ``ESDIRK43``, ``BDF``) when constructing the PathSim
+        ``Simulation`` to avoid prohibitively small step sizes.
+
     Parameters
     ----------
     model : pybamm.BaseBatteryModel or None
@@ -214,6 +219,11 @@ class CellElectrothermal(_CellBase):
     state vector and is read back as output port ``T``.  Supply a
     time-varying ambient / coolant temperature via ``T_amb`` to couple to a
     pack-level thermal model.
+
+    .. note::
+        The SPMe/SPM ODE is stiff.  Use an implicit solver (e.g.
+        ``ESDIRK43``, ``BDF``) when constructing the PathSim
+        ``Simulation`` to avoid prohibitively small step sizes.
 
     Parameters
     ----------
