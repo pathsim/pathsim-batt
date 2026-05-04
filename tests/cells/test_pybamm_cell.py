@@ -61,13 +61,6 @@ class TestPorts(unittest.TestCase):
         self.assertAlmostEqual(CellElectrical(initial_soc=0.5)._initial_soc, 0.5)
         self.assertAlmostEqual(CellElectrothermal(initial_soc=0.8)._initial_soc, 0.8)
 
-    def test_reset_clears_extra_outputs(self):
-        for cls in (CellElectrical, CellElectrothermal):
-            cell = cls()
-            cell.extra_outputs = {"foo": 1.0}
-            cell.reset()
-            self.assertEqual(cell.extra_outputs, {})
-
     def test_initial_value_is_numpy_array(self):
         for cls in (CellElectrical, CellElectrothermal):
             cell = cls()

@@ -21,8 +21,8 @@ PathSim-Batt extends the [PathSim](https://github.com/pathsim/pathsim) simulatio
 
 | Block | Description | Key Parameters |
 |-------|-------------|----------------|
-| `CellElectrothermal` | Coupled electrical + thermal cell (PyBaMM owns temperature ODE) | `model`, `parameter_values`, `initial_soc` |
-| `CellElectrical` | Electrical only, isothermal (PathSim owns temperature ODE) | `model`, `parameter_values`, `initial_soc` |
+| `CellElectrothermal` | Coupled electrical + thermal cell (PathSim integrates PyBaMM ODE incl. temperature) | `model`, `parameter_values`, `initial_soc` |
+| `CellElectrical` | Electrical only, isothermal; wire to `LumpedThermal` for external thermal coupling | `model`, `parameter_values`, `initial_soc` |
 | `LumpedThermal` | Single-node thermal model for external thermal coupling | `mass`, `Cp`, `UA`, `T0` |
 
 `Cell` is an alias for `CellElectrothermal`.
