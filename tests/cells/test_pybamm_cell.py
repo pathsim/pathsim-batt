@@ -190,6 +190,64 @@ class TestElectrical(unittest.TestCase):
         self.sim.run(2)
         self.assertFalse(np.allclose(self.cell.engine.state, state_before))
 
+    def test_q_heat_nonzero_during_discharge(self):
+        """Q_heat must be strictly positive when a discharge current flows.
+
+        With thermal='isothermal' PyBaMM does not compute heat source terms,
+        so Q_heat would be identically zero — this test guards against that.
+        """
+        cell = CellElectrical(initial_soc=1.0)
+        I_src = Constant(5.0)  # 1C-ish discharge
+        T_src = Constant(298.15)
+        sim = Simulation(
+            blocks=[I_src, T_src, cell],
+            connections=[
+                Connection(I_src, cell["I"]),
+                Connection(T_src, cell["T_cell"]),
+            ],
+            dt=10.0,
+            Solver=ESDIRK43,
+        )
+        sim.run(60)
+        self.assertGreater(
+            cell.outputs[1],
+            0.0,
+            "Q_heat is zero — thermal model may not compute heat sources",
+        )
+
+    def test_temperature_input_affects_voltage(self):
+        """T_cell must actually influence the electrochemistry.
+
+        Butler-Volmer kinetics are temperature-dependent, so discharging at
+        a significantly higher temperature must yield a measurably different
+        terminal voltage after the same duration.
+        """
+
+        def _run_and_get_voltage(T_cell):
+            cell = CellElectrical(initial_soc=1.0)
+            I_src = Constant(5.0)
+            T_src = Constant(T_cell)
+            sim = Simulation(
+                blocks=[I_src, T_src, cell],
+                connections=[
+                    Connection(I_src, cell["I"]),
+                    Connection(T_src, cell["T_cell"]),
+                ],
+                dt=10.0,
+                Solver=ESDIRK43,
+            )
+            sim.run(300)
+            return cell.outputs[0]  # terminal voltage [V]
+
+        V_cold = _run_and_get_voltage(278.15)  # 5 °C
+        V_hot = _run_and_get_voltage(318.15)  # 45 °C
+        self.assertNotAlmostEqual(
+            V_cold,
+            V_hot,
+            places=3,
+            msg="T_cell input has no effect on terminal voltage",
+        )
+
 
 class TestElectrothermal(unittest.TestCase):
     """Integration tests for CellElectrothermal — PathSim integrates the PyBaMM ODE."""
@@ -239,6 +297,58 @@ class TestElectrothermal(unittest.TestCase):
         state_before = self.cell.engine.state.copy()
         self.sim.run(2)
         self.assertFalse(np.allclose(self.cell.engine.state, state_before))
+
+    def test_q_heat_nonzero_during_discharge(self):
+        """Q_heat must be strictly positive when a discharge current flows."""
+        cell = CellElectrothermal(initial_soc=1.0)
+        I_src = Constant(5.0)
+        T_src = Constant(298.15)
+        sim = Simulation(
+            blocks=[I_src, T_src, cell],
+            connections=[
+                Connection(I_src, cell["I"]),
+                Connection(T_src, cell["T_amb"]),
+            ],
+            dt=10.0,
+            Solver=ESDIRK43,
+        )
+        sim.run(60)
+        self.assertGreater(
+            cell.outputs[2],
+            0.0,
+            "Q_heat is zero — thermal model may not compute heat sources",
+        )
+
+    def test_tamb_input_affects_cell_temperature(self):
+        """T_amb must influence the output cell temperature.
+
+        With a lower ambient temperature the cell should run cooler after
+        the same discharge duration.
+        """
+
+        def _run_and_get_T_cell(T_amb):
+            cell = CellElectrothermal(initial_soc=1.0)
+            I_src = Constant(5.0)
+            T_src = Constant(T_amb)
+            sim = Simulation(
+                blocks=[I_src, T_src, cell],
+                connections=[
+                    Connection(I_src, cell["I"]),
+                    Connection(T_src, cell["T_amb"]),
+                ],
+                dt=10.0,
+                Solver=ESDIRK43,
+            )
+            sim.run(300)
+            return cell.outputs[1]  # cell temperature [K]
+
+        T_cell_cold_amb = _run_and_get_T_cell(278.15)  # 5 °C ambient
+        T_cell_hot_amb = _run_and_get_T_cell(318.15)  # 45 °C ambient
+        self.assertLess(
+            T_cell_cold_amb,
+            T_cell_hot_amb,
+            msg="T_amb input has no effect on output cell temperature",
+        )
 
 
 class TestCoSimulationElectrical(unittest.TestCase):
@@ -292,6 +402,55 @@ class TestCoSimulationElectrical(unittest.TestCase):
         self.assertLess(cell.outputs[0], 4.3)
         self.assertGreater(cell.outputs[2], 0.0)  # SOC
         self.assertLessEqual(cell.outputs[2], 1.0)
+
+    def test_q_heat_nonzero_during_discharge(self):
+        """Q_heat must be strictly positive when a discharge current flows."""
+        cell = CellCoSimElectrical(initial_soc=1.0, dt=10.0)
+        I_src = Constant(5.0)
+        T_src = Constant(298.15)
+        sim = Simulation(
+            blocks=[I_src, T_src, cell],
+            connections=[
+                Connection(I_src, cell["I"]),
+                Connection(T_src, cell["T_cell"]),
+            ],
+            dt=5.0,
+            Solver=ESDIRK43,
+        )
+        sim.run(60)
+        self.assertGreater(
+            cell.outputs[1],
+            0.0,
+            "Q_heat is zero — thermal model may not compute heat sources",
+        )
+
+    def test_temperature_input_affects_voltage(self):
+        """T_cell must actually influence the electrochemistry."""
+
+        def _run_and_get_voltage(T_cell):
+            cell = CellCoSimElectrical(initial_soc=1.0, dt=10.0)
+            I_src = Constant(5.0)
+            T_src = Constant(T_cell)
+            sim = Simulation(
+                blocks=[I_src, T_src, cell],
+                connections=[
+                    Connection(I_src, cell["I"]),
+                    Connection(T_src, cell["T_cell"]),
+                ],
+                dt=5.0,
+                Solver=ESDIRK43,
+            )
+            sim.run(300)
+            return cell.outputs[0]  # terminal voltage [V]
+
+        V_cold = _run_and_get_voltage(278.15)  # 5 °C
+        V_hot = _run_and_get_voltage(318.15)  # 45 °C
+        self.assertNotAlmostEqual(
+            float(V_cold),
+            float(V_hot),
+            places=3,
+            msg="T_cell input has no effect on terminal voltage",
+        )
 
 
 class TestCoSimulationElectrothermal(unittest.TestCase):
@@ -348,6 +507,52 @@ class TestCoSimulationElectrothermal(unittest.TestCase):
         self.assertLess(cell.outputs[1], 400.0)
         self.assertGreater(cell.outputs[3], 0.0)  # SOC
         self.assertLessEqual(cell.outputs[3], 1.0)
+
+    def test_q_heat_nonzero_during_discharge(self):
+        """Q_heat must be strictly positive when a discharge current flows."""
+        cell = CellCoSimElectrothermal(initial_soc=1.0, dt=10.0)
+        I_src = Constant(5.0)
+        T_src = Constant(298.15)
+        sim = Simulation(
+            blocks=[I_src, T_src, cell],
+            connections=[
+                Connection(I_src, cell["I"]),
+                Connection(T_src, cell["T_amb"]),
+            ],
+            dt=5.0,
+            Solver=ESDIRK43,
+        )
+        sim.run(60)
+        self.assertGreater(
+            cell.outputs[2],
+            0.0,
+            "Q_heat is zero — thermal model may not compute heat sources",
+        )
+
+    def test_tamb_input_affects_cell_temperature(self):
+        """T_amb must influence the output cell temperature."""
+
+        def _run_and_get_T_cell(T_amb):
+            cell = CellCoSimElectrothermal(initial_soc=1.0, dt=10.0)
+            I_src = Constant(5.0)
+            T_src = Constant(T_amb)
+            sim = Simulation(
+                blocks=[I_src, T_src, cell],
+                connections=[
+                    Connection(I_src, cell["I"]),
+                    Connection(T_src, cell["T_amb"]),
+                ],
+                dt=5.0,
+                Solver=ESDIRK43,
+            )
+            sim.run(300)
+            return cell.outputs[1]  # cell temperature [K]
+
+        T_cold = _run_and_get_T_cell(278.15)
+        T_hot = _run_and_get_T_cell(318.15)
+        self.assertLess(
+            T_cold, T_hot, msg="T_amb input has no effect on output cell temperature"
+        )
 
 
 if __name__ == "__main__":
