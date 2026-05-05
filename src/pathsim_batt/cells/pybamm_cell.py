@@ -205,9 +205,7 @@ class _CoSimCellBase(Wrapper):
 
         self._sim = self._build_sim()
 
-        n_outputs = len(self._pybamm_output_vars) + 1
-        self._last_outputs: npt.NDArray[np.float64] = np.zeros(n_outputs)
-        self._last_outputs[-1] = self._initial_soc
+        self._last_outputs: npt.NDArray[np.float64] = self._initial_outputs()
 
         super().__init__(func=self._discrete_step, T=self._dt, tau=self._dt)
 
@@ -223,6 +221,27 @@ class _CoSimCellBase(Wrapper):
         )
         sim.build(initial_soc=self._initial_soc, inputs=_DEFAULT_INPUTS)
         return sim
+
+    def _initial_outputs(self) -> npt.NDArray[np.float64]:
+        """Evaluate output variables at the initial state (t=0, y=y0).
+
+        Uses the built model's variable expressions directly so that the
+        simulation state is not mutated — no solver step is performed.
+        """
+        bm = self._sim.built_model
+        y0 = bm.y0.full()
+        outputs = [
+            float(bm.variables[n].evaluate(t=0, y=y0, inputs=_DEFAULT_INPUTS))
+            for n in self._pybamm_output_vars
+        ]
+        q_dis = float(
+            bm.variables["Discharge capacity [A.h]"].evaluate(
+                t=0, y=y0, inputs=_DEFAULT_INPUTS
+            )
+        )
+        soc = max(0.0, min(1.0, self._initial_soc - q_dis / self._q_nominal))
+        outputs.append(soc)
+        return np.array(outputs, dtype=np.float64)
 
     def _discrete_step(self, current: float, t_amb: float) -> npt.NDArray[np.float64]:
         inputs = {
@@ -249,8 +268,7 @@ class _CoSimCellBase(Wrapper):
     def reset(self) -> None:
         super().reset()
         self._sim = self._build_sim()
-        self._last_outputs = np.zeros(len(self._pybamm_output_vars) + 1)
-        self._last_outputs[-1] = self._initial_soc
+        self._last_outputs = self._initial_outputs()
         self.outputs.update_from_array(self._last_outputs)
 
 
