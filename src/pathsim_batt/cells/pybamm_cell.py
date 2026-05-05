@@ -11,8 +11,30 @@
 
 import casadi
 import numpy as np
+import numpy.typing as npt
 import pybamm
-from pathsim.blocks import DynamicalSystem
+from pathsim.blocks import DynamicalSystem, Wrapper
+
+# HELPERS =============================================================================
+
+_DEFAULT_INPUTS = {
+    "Current function [A]": 0.0,
+    "Ambient temperature [K]": 298.15,
+}
+
+
+def _prepare_parameter_values(
+    parameter_values: pybamm.ParameterValues | None,
+) -> pybamm.ParameterValues:
+    """Copy *parameter_values* (defaulting to Chen2020) and mark both
+    driving inputs as PyBaMM ``"[input]"`` placeholders."""
+    if parameter_values is None:
+        parameter_values = pybamm.ParameterValues("Chen2020")
+    parameter_values = parameter_values.copy()
+    parameter_values["Current function [A]"] = "[input]"
+    parameter_values["Ambient temperature [K]"] = "[input]"
+    return parameter_values
+
 
 # BLOCKS ===============================================================================
 
@@ -44,40 +66,31 @@ class _CellBase(DynamicalSystem):
 
     def __init__(
         self,
-        model,
-        parameter_values,
-        initial_soc,
-        pybamm_solver,
-    ):
+        model: pybamm.BaseBatteryModel | None = None,
+        parameter_values: pybamm.ParameterValues | None = None,
+        initial_soc: float = 1.0,
+        pybamm_solver: pybamm.BaseSolver | None = None,
+    ) -> None:
         self._initial_soc = float(initial_soc)
 
         if model is None:
             model = pybamm.lithium_ion.SPMe(options={"thermal": self._thermal_option})
 
-        if parameter_values is None:
-            parameter_values = pybamm.ParameterValues("Chen2020")
-        parameter_values = parameter_values.copy()
-        parameter_values["Current function [A]"] = "[input]"
-        parameter_values["Ambient temperature [K]"] = "[input]"
-        self._parameter_values = parameter_values
+        self._parameter_values = _prepare_parameter_values(parameter_values)
 
         pybamm_solver = pybamm_solver or pybamm.CasadiSolver(mode="safe")
 
-        _build_inputs = {
-            "Current function [A]": 0.0,
-            "Ambient temperature [K]": 298.15,
-        }
         sim = pybamm.Simulation(
             model,
-            parameter_values=parameter_values,
+            parameter_values=self._parameter_values,
             solver=pybamm_solver,
         )
-        sim.build(initial_soc=self._initial_soc, inputs=_build_inputs)
+        sim.build(initial_soc=self._initial_soc, inputs=_DEFAULT_INPUTS)
 
         all_out_vars = self._pybamm_output_vars + ["Discharge capacity [A.h]"]
-        input_order = ["Current function [A]", "Ambient temperature [K]"]
         casadi_objs = sim.built_model.export_casadi_objects(
-            all_out_vars, input_parameter_order=input_order
+            all_out_vars,
+            input_parameter_order=list(_DEFAULT_INPUTS.keys()),
         )
 
         t_sym = casadi_objs["t"]
@@ -108,7 +121,7 @@ class _CellBase(DynamicalSystem):
         self._casadi_rhs = rhs_fn
         self._jac_rhs_eval = jac_fn
         self._out_var_fcns = out_var_fns
-        self._q_nominal = float(parameter_values["Nominal cell capacity [A.h]"])
+        self._q_nominal = float(self._parameter_values["Nominal cell capacity [A.h]"])
 
         q_nominal = self._q_nominal
         initial_soc_val = float(initial_soc)
@@ -138,8 +151,7 @@ class _CellBase(DynamicalSystem):
 
         x0_fn = casadi.Function("x0", [p_sym], [casadi_objs["x0"]])
 
-        default_inputs = casadi.DM([0.0, 298.15])
-        y0 = np.array(x0_fn(default_inputs)).flatten()
+        y0 = np.array(x0_fn(casadi.DM(list(_DEFAULT_INPUTS.values())))).flatten()
 
         super().__init__(
             func_dyn=func_dyn,
@@ -148,11 +160,106 @@ class _CellBase(DynamicalSystem):
             jac_dyn=jac_dyn,
         )
 
-    def __len__(self):
+    def __len__(self) -> int:
         return len(self._pybamm_output_vars) + 1
 
-    def reset(self):
+    def reset(self) -> None:
         super().reset()
+
+
+class _CoSimCellBase(Wrapper):
+    """Shared base for co-simulation PyBaMM cell blocks.
+
+    Wraps ``pybamm.Simulation.step()`` in a periodic ``Wrapper`` event, so
+    PyBaMM advances on discrete macro-steps while PathSim sees a zero-order-held
+    output signal between events. This allows using PyBaMM models that produce
+    DAE systems after discretisation (e.g. DFN), because PyBaMM owns the
+    differential-algebraic solve internally.
+
+    Subclasses set ``_thermal_option``, ``_pybamm_output_vars`` and port labels.
+    """
+
+    _thermal_option: str = ""
+    _pybamm_output_vars: list[str] = []
+
+    def __init__(
+        self,
+        model: pybamm.BaseBatteryModel | None = None,
+        parameter_values: pybamm.ParameterValues | None = None,
+        initial_soc: float = 1.0,
+        pybamm_solver: pybamm.BaseSolver | None = None,
+        dt: float = 1.0,
+    ) -> None:
+        self._initial_soc = float(initial_soc)
+        self._dt = float(dt)
+        if self._dt <= 0.0:
+            raise ValueError("dt must be positive")
+
+        if model is None:
+            model = pybamm.lithium_ion.SPMe(options={"thermal": self._thermal_option})
+
+        self._model = model
+        self._parameter_values = _prepare_parameter_values(parameter_values)
+        self._pybamm_solver = pybamm_solver or pybamm.IDAKLUSolver()
+        self._q_nominal = float(self._parameter_values["Nominal cell capacity [A.h]"])
+
+        self._sim = self._build_sim()
+
+        self._last_outputs: npt.NDArray[np.float64] = self._initial_outputs()
+
+        super().__init__(func=self._discrete_step, T=self._dt, tau=self._dt)
+
+        # ensure outputs are valid before first scheduled sample
+        self.outputs.update_from_array(self._last_outputs)
+
+    def _build_sim(self) -> pybamm.Simulation:
+        """Create and build a fresh ``pybamm.Simulation`` with default inputs."""
+        sim = pybamm.Simulation(
+            self._model,
+            parameter_values=self._parameter_values,
+            solver=self._pybamm_solver,
+        )
+        sim.build(initial_soc=self._initial_soc, inputs=_DEFAULT_INPUTS)
+        return sim
+
+    def _initial_outputs(self) -> npt.NDArray[np.float64]:
+        """Return placeholder outputs for t=0 before the first solver step.
+
+        The co-simulation takes its first real sample at t=dt, so this
+        placeholder is only held for one macro-step.  All outputs are zero
+        except SOC, which is set to the user-supplied initial value.
+        """
+        out = np.zeros(len(self._pybamm_output_vars) + 1, dtype=np.float64)
+        out[-1] = self._initial_soc  # SOC is always the last output
+        return out
+
+    def _discrete_step(self, current: float, t_amb: float) -> npt.NDArray[np.float64]:
+        inputs = {
+            "Current function [A]": float(current),
+            "Ambient temperature [K]": float(t_amb),
+        }
+        self._sim.step(dt=self._dt, inputs=inputs, save=False)
+
+        sol = self._sim.solution
+        outputs = [float(sol[n].entries[-1]) for n in self._pybamm_output_vars]
+        q_dis = float(sol["Discharge capacity [A.h]"].entries[-1])
+        soc = max(0.0, min(1.0, self._initial_soc - q_dis / self._q_nominal))
+        outputs.append(soc)
+
+        self._last_outputs = np.array(outputs, dtype=np.float64)
+        return self._last_outputs
+
+    def update(self, t: float) -> None:
+        self.outputs.update_from_array(self._last_outputs)
+
+    def __len__(self) -> int:
+        return len(self._pybamm_output_vars) + 1
+
+    def reset(self) -> None:
+        super().reset()
+        self._sim = self._build_sim()
+        self._last_outputs = self._initial_outputs()
+        self.outputs.update_from_array(self._last_outputs)
 
 
 class CellElectrical(_CellBase):
@@ -200,15 +307,6 @@ class CellElectrical(_CellBase):
 
     input_port_labels = {"I": 0, "T_cell": 1}
     output_port_labels = {"V": 0, "Q_heat": 1, "SOC": 2}
-
-    def __init__(
-        self,
-        model=None,
-        parameter_values=None,
-        initial_soc=1.0,
-        pybamm_solver=None,
-    ):
-        super().__init__(model, parameter_values, initial_soc, pybamm_solver)
 
 
 class CellElectrothermal(_CellBase):
@@ -260,14 +358,71 @@ class CellElectrothermal(_CellBase):
     input_port_labels = {"I": 0, "T_amb": 1}
     output_port_labels = {"V": 0, "T": 1, "Q_heat": 2, "SOC": 3}
 
-    def __init__(
-        self,
-        model=None,
-        parameter_values=None,
-        initial_soc=1.0,
-        pybamm_solver=None,
-    ):
-        super().__init__(model, parameter_values, initial_soc, pybamm_solver)
+
+class CellCoSimElectrical(_CoSimCellBase):
+    """Cell block (co-simulation) — electrical outputs only, external thermal coupling.
+
+    PyBaMM advances internally on discrete macro-steps of ``dt`` via
+    ``pybamm.Simulation.step()``. PathSim receives zero-order-held outputs
+    between macro-steps.
+
+    This mode supports PyBaMM models that result in DAE systems (e.g. DFN).
+
+    Parameters
+    ----------
+    model : pybamm.BaseBatteryModel or None
+        PyBaMM lithium-ion model. Defaults to ``SPMe(thermal="isothermal")``.
+    parameter_values : pybamm.ParameterValues or None
+        PyBaMM parameter set. Defaults to ``Chen2020``.
+    initial_soc : float
+        Initial state of charge (0–1). Default 1.0.
+    pybamm_solver : pybamm.BaseSolver or None
+        Solver used by PyBaMM for the internal time stepping.
+        Defaults to ``IDAKLUSolver()``.
+    dt : float
+        Co-simulation macro-step size [s]. Must be > 0.
+    """
+
+    _thermal_option = "isothermal"
+    _pybamm_output_vars = [
+        "Terminal voltage [V]",
+        "X-averaged total heating [W.m-3]",
+    ]
+
+    input_port_labels = {"I": 0, "T_cell": 1}
+    output_port_labels = {"V": 0, "Q_heat": 1, "SOC": 2}
 
 
-Cell = CellElectrothermal
+class CellCoSimElectrothermal(_CoSimCellBase):
+    """Cell block (co-simulation) — coupled electrical and thermal model.
+
+    PyBaMM advances internally on discrete macro-steps of ``dt`` via
+    ``pybamm.Simulation.step()``. PathSim receives zero-order-held outputs
+    between macro-steps.
+
+    This mode supports PyBaMM models that result in DAE systems (e.g. DFN).
+
+    Parameters
+    ----------
+    model : pybamm.BaseBatteryModel or None
+        PyBaMM lithium-ion model. Defaults to ``SPMe(thermal="lumped")``.
+    parameter_values : pybamm.ParameterValues or None
+        PyBaMM parameter set. Defaults to ``Chen2020``.
+    initial_soc : float
+        Initial state of charge (0–1). Default 1.0.
+    pybamm_solver : pybamm.BaseSolver or None
+        Solver used by PyBaMM for the internal time stepping.
+        Defaults to ``IDAKLUSolver()``.
+    dt : float
+        Co-simulation macro-step size [s]. Must be > 0.
+    """
+
+    _thermal_option = "lumped"
+    _pybamm_output_vars = [
+        "Terminal voltage [V]",
+        "X-averaged cell temperature [K]",
+        "X-averaged total heating [W.m-3]",
+    ]
+
+    input_port_labels = {"I": 0, "T_amb": 1}
+    output_port_labels = {"V": 0, "T": 1, "Q_heat": 2, "SOC": 3}
