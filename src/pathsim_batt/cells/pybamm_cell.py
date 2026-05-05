@@ -223,25 +223,15 @@ class _CoSimCellBase(Wrapper):
         return sim
 
     def _initial_outputs(self) -> npt.NDArray[np.float64]:
-        """Evaluate output variables at the initial state (t=0, y=y0).
+        """Return placeholder outputs for t=0 before the first solver step.
 
-        Uses the built model's variable expressions directly so that the
-        simulation state is not mutated — no solver step is performed.
+        The co-simulation takes its first real sample at t=dt, so this
+        placeholder is only held for one macro-step.  All outputs are zero
+        except SOC, which is set to the user-supplied initial value.
         """
-        bm = self._sim.built_model
-        y0 = bm.y0.full()
-        outputs = [
-            float(bm.variables[n].evaluate(t=0, y=y0, inputs=_DEFAULT_INPUTS))
-            for n in self._pybamm_output_vars
-        ]
-        q_dis = float(
-            bm.variables["Discharge capacity [A.h]"].evaluate(
-                t=0, y=y0, inputs=_DEFAULT_INPUTS
-            )
-        )
-        soc = max(0.0, min(1.0, self._initial_soc - q_dis / self._q_nominal))
-        outputs.append(soc)
-        return np.array(outputs, dtype=np.float64)
+        out = np.zeros(len(self._pybamm_output_vars) + 1, dtype=np.float64)
+        out[-1] = self._initial_soc  # SOC is always the last output
+        return out
 
     def _discrete_step(self, current: float, t_amb: float) -> npt.NDArray[np.float64]:
         inputs = {
