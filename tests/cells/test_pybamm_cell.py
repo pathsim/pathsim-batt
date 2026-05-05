@@ -136,6 +136,12 @@ class TestPorts(unittest.TestCase):
         cell = CellCoSimElectrical(model=dfn, dt=1.0)
         self.assertEqual(len(cell), 3)
 
+    def test_dfn_cosim_electrothermal_supported(self):
+        """DFN with lumped thermal is supported by the electrothermal co-sim block."""
+        dfn = pybamm.lithium_ion.DFN(options={"thermal": "lumped"})
+        cell = CellCoSimElectrothermal(model=dfn, dt=1.0)
+        self.assertEqual(len(cell), 4)
+
 
 class TestElectrical(unittest.TestCase):
     """Integration tests for CellElectrical — PathSim integrates the PyBaMM ODE."""
@@ -263,6 +269,30 @@ class TestCoSimulationElectrical(unittest.TestCase):
         self.assertGreater(self.cell.outputs[2], 0.0)  # SOC
         self.assertLessEqual(self.cell.outputs[2], 1.0)
 
+    def test_soc_decreases_on_discharge(self):
+        self.sim.run(2)
+        soc_0 = self.cell.outputs[2]
+        self.sim.run(60)
+        self.assertLess(self.cell.outputs[2], soc_0)
+
+    def test_discrete_step_fires_and_voltage_physical(self):
+        """_discrete_step must be called and produce a physical terminal voltage."""
+        self.sim.run(2)
+        # After at least one macro-step the voltage must be in a physical range.
+        self.assertGreater(self.cell.outputs[0], 3.0)
+        self.assertLess(self.cell.outputs[0], 4.3)
+
+    def test_dfn_step_outputs_physical(self):
+        """DFN-backed co-sim cell must produce physical outputs after stepping."""
+        dfn = pybamm.lithium_ion.DFN(options={"thermal": "isothermal"})
+        cell = CellCoSimElectrical(model=dfn, dt=1.0)
+        sim = self._make_simulation(cell, 1.0, 298.15)
+        sim.run(2)
+        self.assertGreater(cell.outputs[0], 3.0)   # V
+        self.assertLess(cell.outputs[0], 4.3)
+        self.assertGreater(cell.outputs[2], 0.0)   # SOC
+        self.assertLessEqual(cell.outputs[2], 1.0)
+
 
 class TestCoSimulationElectrothermal(unittest.TestCase):
     """Integration tests for CellCoSimElectrothermal — PyBaMM performs the stepping."""
@@ -293,6 +323,31 @@ class TestCoSimulationElectrothermal(unittest.TestCase):
         self.assertGreaterEqual(self.cell.outputs[2], 0.0)  # Q_heat
         self.assertGreater(self.cell.outputs[3], 0.0)  # SOC
         self.assertLessEqual(self.cell.outputs[3], 1.0)
+
+    def test_soc_decreases_on_discharge(self):
+        self.sim.run(2)
+        soc_0 = self.cell.outputs[3]
+        self.sim.run(60)
+        self.assertLess(self.cell.outputs[3], soc_0)
+
+    def test_discrete_step_fires_and_voltage_physical(self):
+        """_discrete_step must be called and produce a physical terminal voltage."""
+        self.sim.run(2)
+        self.assertGreater(self.cell.outputs[0], 3.0)
+        self.assertLess(self.cell.outputs[0], 4.3)
+
+    def test_dfn_step_outputs_physical(self):
+        """DFN-backed electrothermal co-sim cell must produce physical outputs."""
+        dfn = pybamm.lithium_ion.DFN(options={"thermal": "lumped"})
+        cell = CellCoSimElectrothermal(model=dfn, dt=1.0)
+        sim = self._make_simulation(cell, 1.0, 298.15)
+        sim.run(2)
+        self.assertGreater(cell.outputs[0], 3.0)    # V
+        self.assertLess(cell.outputs[0], 4.3)
+        self.assertGreater(cell.outputs[1], 250.0)  # T
+        self.assertLess(cell.outputs[1], 400.0)
+        self.assertGreater(cell.outputs[3], 0.0)    # SOC
+        self.assertLessEqual(cell.outputs[3], 1.0)
 
 
 if __name__ == "__main__":
