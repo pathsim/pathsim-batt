@@ -236,7 +236,7 @@ class _CoSimCellBase(Wrapper):
         soc = max(0.0, min(1.0, self._initial_soc - q_dis / self._q_nominal))
         outputs.append(soc)
 
-        self._last_outputs = np.array(outputs)
+        self._last_outputs = np.array(outputs, dtype=np.float64)
         return self._last_outputs
 
     def update(self, t: float) -> None:
