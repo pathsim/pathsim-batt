@@ -62,6 +62,7 @@ class _CellBase(DynamicalSystem):
     """
 
     _thermal_option: str = ""
+    _thermal_extra_options: dict[str, str] = {}
     _pybamm_output_vars: list[str] = []
 
     def __init__(
@@ -74,7 +75,9 @@ class _CellBase(DynamicalSystem):
         self._initial_soc = float(initial_soc)
 
         if model is None:
-            model = pybamm.lithium_ion.SPMe(options={"thermal": self._thermal_option})
+            model = pybamm.lithium_ion.SPMe(
+                options={"thermal": self._thermal_option, **self._thermal_extra_options}
+            )
 
         self._parameter_values = _prepare_parameter_values(parameter_values)
 
@@ -180,6 +183,7 @@ class _CoSimCellBase(Wrapper):
     """
 
     _thermal_option: str = ""
+    _thermal_extra_options: dict[str, str] = {}
     _pybamm_output_vars: list[str] = []
 
     def __init__(
@@ -196,7 +200,9 @@ class _CoSimCellBase(Wrapper):
             raise ValueError("dt must be positive")
 
         if model is None:
-            model = pybamm.lithium_ion.SPMe(options={"thermal": self._thermal_option})
+            model = pybamm.lithium_ion.SPMe(
+                options={"thermal": self._thermal_option, **self._thermal_extra_options}
+            )
 
         self._model = model
         self._parameter_values = _prepare_parameter_values(parameter_values)
@@ -278,7 +284,8 @@ class CellElectrical(_CellBase):
     Parameters
     ----------
     model : pybamm.BaseBatteryModel or None
-        PyBaMM lithium-ion model.  Defaults to ``SPMe(thermal="isothermal")``.
+        PyBaMM lithium-ion model.  Defaults to isothermal SPMe with heat
+        source calculation enabled.
     parameter_values : pybamm.ParameterValues or None
         PyBaMM parameter set.  Defaults to ``Chen2020``.
     initial_soc : float
@@ -300,6 +307,7 @@ class CellElectrical(_CellBase):
     """
 
     _thermal_option = "isothermal"
+    _thermal_extra_options = {"calculate heat source for isothermal models": "true"}
     _pybamm_output_vars = [
         "Terminal voltage [V]",
         "X-averaged total heating [W.m-3]",
@@ -371,7 +379,8 @@ class CellCoSimElectrical(_CoSimCellBase):
     Parameters
     ----------
     model : pybamm.BaseBatteryModel or None
-        PyBaMM lithium-ion model. Defaults to ``SPMe(thermal="isothermal")``.
+        PyBaMM lithium-ion model.  Defaults to isothermal SPMe with heat
+        source calculation enabled.
     parameter_values : pybamm.ParameterValues or None
         PyBaMM parameter set. Defaults to ``Chen2020``.
     initial_soc : float
@@ -384,6 +393,7 @@ class CellCoSimElectrical(_CoSimCellBase):
     """
 
     _thermal_option = "isothermal"
+    _thermal_extra_options = {"calculate heat source for isothermal models": "true"}
     _pybamm_output_vars = [
         "Terminal voltage [V]",
         "X-averaged total heating [W.m-3]",
