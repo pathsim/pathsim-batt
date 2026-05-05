@@ -205,7 +205,8 @@ class _CoSimCellBase(Wrapper):
 
         self._sim = self._build_sim()
 
-        self._last_outputs: npt.NDArray[np.float64] = np.zeros(len(self._pybamm_output_vars) + 1)
+        n_outputs = len(self._pybamm_output_vars) + 1
+        self._last_outputs: npt.NDArray[np.float64] = np.zeros(n_outputs)
         self._last_outputs[-1] = self._initial_soc
 
         super().__init__(func=self._discrete_step, T=self._dt, tau=self._dt)
