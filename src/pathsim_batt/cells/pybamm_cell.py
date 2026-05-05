@@ -284,9 +284,8 @@ class CellElectrical(_CellBase):
     Parameters
     ----------
     model : pybamm.BaseBatteryModel or None
-        PyBaMM lithium-ion model.  Defaults to
-        ``SPMe(thermal="isothermal", calculate heat source for isothermal
-        models="true")``.
+        PyBaMM lithium-ion model.  Defaults to isothermal SPMe with heat
+        source calculation enabled.
     parameter_values : pybamm.ParameterValues or None
         PyBaMM parameter set.  Defaults to ``Chen2020``.
     initial_soc : float
@@ -380,9 +379,8 @@ class CellCoSimElectrical(_CoSimCellBase):
     Parameters
     ----------
     model : pybamm.BaseBatteryModel or None
-        PyBaMM lithium-ion model. Defaults to
-        ``SPMe(thermal="isothermal", calculate heat source for isothermal
-        models="true")``.
+        PyBaMM lithium-ion model.  Defaults to isothermal SPMe with heat
+        source calculation enabled.
     parameter_values : pybamm.ParameterValues or None
         PyBaMM parameter set. Defaults to ``Chen2020``.
     initial_soc : float
