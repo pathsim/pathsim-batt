@@ -288,9 +288,9 @@ class TestCoSimulationElectrical(unittest.TestCase):
         cell = CellCoSimElectrical(model=dfn, dt=1.0)
         sim = self._make_simulation(cell, 1.0, 298.15)
         sim.run(2)
-        self.assertGreater(cell.outputs[0], 3.0)   # V
+        self.assertGreater(cell.outputs[0], 3.0)  # V
         self.assertLess(cell.outputs[0], 4.3)
-        self.assertGreater(cell.outputs[2], 0.0)   # SOC
+        self.assertGreater(cell.outputs[2], 0.0)  # SOC
         self.assertLessEqual(cell.outputs[2], 1.0)
 
 
@@ -342,11 +342,11 @@ class TestCoSimulationElectrothermal(unittest.TestCase):
         cell = CellCoSimElectrothermal(model=dfn, dt=1.0)
         sim = self._make_simulation(cell, 1.0, 298.15)
         sim.run(2)
-        self.assertGreater(cell.outputs[0], 3.0)    # V
+        self.assertGreater(cell.outputs[0], 3.0)  # V
         self.assertLess(cell.outputs[0], 4.3)
         self.assertGreater(cell.outputs[1], 250.0)  # T
         self.assertLess(cell.outputs[1], 400.0)
-        self.assertGreater(cell.outputs[3], 0.0)    # SOC
+        self.assertGreater(cell.outputs[3], 0.0)  # SOC
         self.assertLessEqual(cell.outputs[3], 1.0)
 
 
