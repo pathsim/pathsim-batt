@@ -238,7 +238,7 @@ class _CoSimCellBase(Wrapper):
             "Current function [A]": float(current),
             "Ambient temperature [K]": float(t_amb),
         }
-        self._sim.step(dt=self._dt, inputs=inputs)
+        self._sim.step(dt=self._dt, inputs=inputs, save=False)
 
         sol = self._sim.solution
         outputs = [float(sol[n].entries[-1]) for n in self._pybamm_output_vars]
