@@ -1,3 +1,13 @@
-from .pybamm_cell import Cell, CellElectrical, CellElectrothermal
+from .pybamm_cell import (
+	CellCoSimElectrical,
+	CellCoSimElectrothermal,
+	CellElectrical,
+	CellElectrothermal,
+)
 
-__all__ = ["Cell", "CellElectrical", "CellElectrothermal"]
+__all__ = [
+	"CellElectrical",
+	"CellElectrothermal",
+	"CellCoSimElectrical",
+	"CellCoSimElectrothermal",
+]
