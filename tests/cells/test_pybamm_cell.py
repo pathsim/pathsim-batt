@@ -21,7 +21,7 @@ class TestPorts(unittest.TestCase):
 
     def test_electrical_output_labels(self):
         self.assertEqual(CellElectrical.output_port_labels["V"], 0)
-        self.assertEqual(CellElectrical.output_port_labels["Q_heat"], 1)
+        self.assertEqual(CellElectrical.output_port_labels["Q_dot"], 1)
         self.assertEqual(CellElectrical.output_port_labels["SOC"], 2)
 
     def test_electrothermal_input_labels(self):
@@ -31,7 +31,7 @@ class TestPorts(unittest.TestCase):
     def test_electrothermal_output_labels(self):
         self.assertEqual(CellElectrothermal.output_port_labels["V"], 0)
         self.assertEqual(CellElectrothermal.output_port_labels["T"], 1)
-        self.assertEqual(CellElectrothermal.output_port_labels["Q_heat"], 2)
+        self.assertEqual(CellElectrothermal.output_port_labels["Q_dot"], 2)
         self.assertEqual(CellElectrothermal.output_port_labels["SOC"], 3)
 
     def test_is_dynamic(self):
@@ -40,17 +40,17 @@ class TestPorts(unittest.TestCase):
 
     def test_cosim_len_zero(self):
         cell_e = CellCoSimElectrical(dt=1.0)
-        self.assertEqual(len(cell_e), 3)  # V, Q_heat, SOC
+        self.assertEqual(len(cell_e), 3)  # V, Q_dot, SOC
         cell_et = CellCoSimElectrothermal(dt=1.0)
-        self.assertEqual(len(cell_et), 4)  # V, T, Q_heat, SOC
+        self.assertEqual(len(cell_et), 4)  # V, T, Q_dot, SOC
 
     def test_len_zero(self):
         cell_e = CellElectrical()
         cell_e.set_solver(ESDIRK43, None)
-        self.assertEqual(len(cell_e), 3)  # V, Q_heat, SOC
+        self.assertEqual(len(cell_e), 3)  # V, Q_dot, SOC
         cell_et = CellElectrothermal()
         cell_et.set_solver(ESDIRK43, None)
-        self.assertEqual(len(cell_et), 4)  # V, T, Q_heat, SOC
+        self.assertEqual(len(cell_et), 4)  # V, T, Q_dot, SOC
 
     def test_current_always_input(self):
         pv = pybamm.ParameterValues("Chen2020")
@@ -168,7 +168,7 @@ class TestElectrical(unittest.TestCase):
         self.sim.run(1)
         self.assertGreater(self.cell.outputs[0], 3.0)  # V
         self.assertLess(self.cell.outputs[0], 4.3)
-        self.assertGreaterEqual(self.cell.outputs[1], 0.0)  # Q_heat
+        self.assertGreaterEqual(self.cell.outputs[1], 0.0)  # Q_dot
         self.assertGreater(self.cell.outputs[2], 0.0)  # SOC
         self.assertLessEqual(self.cell.outputs[2], 1.0)
 
@@ -191,10 +191,10 @@ class TestElectrical(unittest.TestCase):
         self.assertFalse(np.allclose(self.cell.engine.state, state_before))
 
     def test_q_heat_nonzero_during_discharge(self):
-        """Q_heat must be strictly positive when a discharge current flows.
+        """Q_dot must be strictly positive when a discharge current flows.
 
         With thermal='isothermal' PyBaMM does not compute heat source terms,
-        so Q_heat would be identically zero — this test guards against that.
+        so Q_dot would be identically zero — this test guards against that.
         """
         cell = CellElectrical(initial_soc=1.0)
         I_src = Constant(5.0)  # 1C-ish discharge
@@ -212,7 +212,7 @@ class TestElectrical(unittest.TestCase):
         self.assertGreater(
             cell.outputs[1],
             0.0,
-            "Q_heat is zero — thermal model may not compute heat sources",
+            "Q_dot is zero — thermal model may not compute heat sources",
         )
 
     def test_temperature_input_affects_voltage(self):
@@ -276,7 +276,7 @@ class TestElectrothermal(unittest.TestCase):
         self.assertLess(self.cell.outputs[0], 4.3)
         self.assertGreater(self.cell.outputs[1], 250.0)  # T
         self.assertLess(self.cell.outputs[1], 400.0)
-        self.assertGreaterEqual(self.cell.outputs[2], 0.0)  # Q_heat
+        self.assertGreaterEqual(self.cell.outputs[2], 0.0)  # Q_dot
         self.assertGreater(self.cell.outputs[3], 0.0)  # SOC
         self.assertLessEqual(self.cell.outputs[3], 1.0)
 
@@ -299,7 +299,7 @@ class TestElectrothermal(unittest.TestCase):
         self.assertFalse(np.allclose(self.cell.engine.state, state_before))
 
     def test_q_heat_nonzero_during_discharge(self):
-        """Q_heat must be strictly positive when a discharge current flows."""
+        """Q_dot must be strictly positive when a discharge current flows."""
         cell = CellElectrothermal(initial_soc=1.0)
         I_src = Constant(5.0)
         T_src = Constant(298.15)
@@ -316,7 +316,7 @@ class TestElectrothermal(unittest.TestCase):
         self.assertGreater(
             cell.outputs[2],
             0.0,
-            "Q_heat is zero — thermal model may not compute heat sources",
+            "Q_dot is zero — thermal model may not compute heat sources",
         )
 
     def test_tamb_input_affects_cell_temperature(self):
@@ -375,7 +375,7 @@ class TestCoSimulationElectrical(unittest.TestCase):
         self.sim.run(2)
         self.assertGreater(self.cell.outputs[0], 2.0)  # V
         self.assertLess(self.cell.outputs[0], 5.0)
-        self.assertGreaterEqual(self.cell.outputs[1], 0.0)  # Q_heat
+        self.assertGreaterEqual(self.cell.outputs[1], 0.0)  # Q_dot
         self.assertGreater(self.cell.outputs[2], 0.0)  # SOC
         self.assertLessEqual(self.cell.outputs[2], 1.0)
 
@@ -404,7 +404,7 @@ class TestCoSimulationElectrical(unittest.TestCase):
         self.assertLessEqual(cell.outputs[2], 1.0)
 
     def test_q_heat_nonzero_during_discharge(self):
-        """Q_heat must be strictly positive when a discharge current flows."""
+        """Q_dot must be strictly positive when a discharge current flows."""
         cell = CellCoSimElectrical(initial_soc=1.0, dt=10.0)
         I_src = Constant(5.0)
         T_src = Constant(298.15)
@@ -421,7 +421,7 @@ class TestCoSimulationElectrical(unittest.TestCase):
         self.assertGreater(
             cell.outputs[1],
             0.0,
-            "Q_heat is zero — thermal model may not compute heat sources",
+            "Q_dot is zero — thermal model may not compute heat sources",
         )
 
     def test_temperature_input_affects_voltage(self):
@@ -479,7 +479,7 @@ class TestCoSimulationElectrothermal(unittest.TestCase):
         self.assertLess(self.cell.outputs[0], 5.0)
         self.assertGreater(self.cell.outputs[1], 250.0)  # T
         self.assertLess(self.cell.outputs[1], 400.0)
-        self.assertGreaterEqual(self.cell.outputs[2], 0.0)  # Q_heat
+        self.assertGreaterEqual(self.cell.outputs[2], 0.0)  # Q_dot
         self.assertGreater(self.cell.outputs[3], 0.0)  # SOC
         self.assertLessEqual(self.cell.outputs[3], 1.0)
 
@@ -509,7 +509,7 @@ class TestCoSimulationElectrothermal(unittest.TestCase):
         self.assertLessEqual(cell.outputs[3], 1.0)
 
     def test_q_heat_nonzero_during_discharge(self):
-        """Q_heat must be strictly positive when a discharge current flows."""
+        """Q_dot must be strictly positive when a discharge current flows."""
         cell = CellCoSimElectrothermal(initial_soc=1.0, dt=10.0)
         I_src = Constant(5.0)
         T_src = Constant(298.15)
@@ -526,7 +526,7 @@ class TestCoSimulationElectrothermal(unittest.TestCase):
         self.assertGreater(
             cell.outputs[2],
             0.0,
-            "Q_heat is zero — thermal model may not compute heat sources",
+            "Q_dot is zero — thermal model may not compute heat sources",
         )
 
     def test_tamb_input_affects_cell_temperature(self):
