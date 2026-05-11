@@ -271,10 +271,10 @@ class _CoSimCellBase(Wrapper):
 class CellElectrical(_CellBase):
     """Cell block — electrical outputs only, external thermal coupling.
 
-    PathSim integrates both the electrochemical state (via the discretised
-    PyBaMM ODE) and the cell temperature ODE.  Wire ``Q_heat`` to a
-    ``LumpedThermal`` (or similar) block and feed its temperature output
-    back to ``T_cell``.
+    PathSim integrates the electrochemical state via the discretised PyBaMM
+    ODE.  Temperature dynamics live outside this block: wire ``Q_dot`` to a
+    ``LumpedThermal`` (or similar) block and feed its temperature output back
+    to ``T_cell``.
 
     .. note::
         The SPMe/SPM ODE is stiff.  Use an implicit solver (e.g.
@@ -302,7 +302,7 @@ class CellElectrical(_CellBase):
     Outputs
     -------
     V (0) : terminal voltage [V]
-    Q_heat (1) : X-averaged volumetric heat generation [W m⁻³]
+    Q_dot (1) : total heat generation [W]
     SOC (2) : state of charge (0–1)
     """
 
@@ -310,11 +310,11 @@ class CellElectrical(_CellBase):
     _thermal_extra_options = {"calculate heat source for isothermal models": "true"}
     _pybamm_output_vars = [
         "Terminal voltage [V]",
-        "X-averaged total heating [W.m-3]",
+        "Total heating [W]",
     ]
 
     input_port_labels = {"I": 0, "T_cell": 1}
-    output_port_labels = {"V": 0, "Q_heat": 1, "SOC": 2}
+    output_port_labels = {"V": 0, "Q_dot": 1, "SOC": 2}
 
 
 class CellElectrothermal(_CellBase):
@@ -352,7 +352,7 @@ class CellElectrothermal(_CellBase):
     -------
     V (0) : terminal voltage [V]
     T (1) : cell temperature [K] (part of PyBaMM state)
-    Q_heat (2) : X-averaged volumetric heat generation [W m⁻³]
+    Q_dot (2) : total heat generation [W]
     SOC (3) : state of charge (0–1)
     """
 
@@ -360,11 +360,11 @@ class CellElectrothermal(_CellBase):
     _pybamm_output_vars = [
         "Terminal voltage [V]",
         "X-averaged cell temperature [K]",
-        "X-averaged total heating [W.m-3]",
+        "Total heating [W]",
     ]
 
     input_port_labels = {"I": 0, "T_amb": 1}
-    output_port_labels = {"V": 0, "T": 1, "Q_heat": 2, "SOC": 3}
+    output_port_labels = {"V": 0, "T": 1, "Q_dot": 2, "SOC": 3}
 
 
 class CellCoSimElectrical(_CoSimCellBase):
@@ -396,11 +396,11 @@ class CellCoSimElectrical(_CoSimCellBase):
     _thermal_extra_options = {"calculate heat source for isothermal models": "true"}
     _pybamm_output_vars = [
         "Terminal voltage [V]",
-        "X-averaged total heating [W.m-3]",
+        "Total heating [W]",
     ]
 
     input_port_labels = {"I": 0, "T_cell": 1}
-    output_port_labels = {"V": 0, "Q_heat": 1, "SOC": 2}
+    output_port_labels = {"V": 0, "Q_dot": 1, "SOC": 2}
 
 
 class CellCoSimElectrothermal(_CoSimCellBase):
@@ -431,8 +431,8 @@ class CellCoSimElectrothermal(_CoSimCellBase):
     _pybamm_output_vars = [
         "Terminal voltage [V]",
         "X-averaged cell temperature [K]",
-        "X-averaged total heating [W.m-3]",
+        "Total heating [W]",
     ]
 
     input_port_labels = {"I": 0, "T_amb": 1}
-    output_port_labels = {"V": 0, "T": 1, "Q_heat": 2, "SOC": 3}
+    output_port_labels = {"V": 0, "T": 1, "Q_dot": 2, "SOC": 3}
