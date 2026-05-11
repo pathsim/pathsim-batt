@@ -271,10 +271,10 @@ class _CoSimCellBase(Wrapper):
 class CellElectrical(_CellBase):
     """Cell block — electrical outputs only, external thermal coupling.
 
-    PathSim integrates both the electrochemical state (via the discretised
-    PyBaMM ODE) and the cell temperature ODE.  Wire ``Q_dot`` to a
-    ``LumpedThermal`` (or similar) block and feed its temperature output
-    back to ``T_cell``.
+    PathSim integrates the electrochemical state via the discretised PyBaMM
+    ODE.  Temperature dynamics live outside this block: wire ``Q_dot`` to a
+    ``LumpedThermal`` (or similar) block and feed its temperature output back
+    to ``T_cell``.
 
     .. note::
         The SPMe/SPM ODE is stiff.  Use an implicit solver (e.g.

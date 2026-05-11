@@ -190,7 +190,7 @@ class TestElectrical(unittest.TestCase):
         self.sim.run(2)
         self.assertFalse(np.allclose(self.cell.engine.state, state_before))
 
-    def test_q_heat_nonzero_during_discharge(self):
+    def test_q_dot_nonzero_during_discharge(self):
         """Q_dot must be strictly positive when a discharge current flows.
 
         With thermal='isothermal' PyBaMM does not compute heat source terms,
@@ -298,7 +298,7 @@ class TestElectrothermal(unittest.TestCase):
         self.sim.run(2)
         self.assertFalse(np.allclose(self.cell.engine.state, state_before))
 
-    def test_q_heat_nonzero_during_discharge(self):
+    def test_q_dot_nonzero_during_discharge(self):
         """Q_dot must be strictly positive when a discharge current flows."""
         cell = CellElectrothermal(initial_soc=1.0)
         I_src = Constant(5.0)
@@ -403,7 +403,7 @@ class TestCoSimulationElectrical(unittest.TestCase):
         self.assertGreater(cell.outputs[2], 0.0)  # SOC
         self.assertLessEqual(cell.outputs[2], 1.0)
 
-    def test_q_heat_nonzero_during_discharge(self):
+    def test_q_dot_nonzero_during_discharge(self):
         """Q_dot must be strictly positive when a discharge current flows."""
         cell = CellCoSimElectrical(initial_soc=1.0, dt=10.0)
         I_src = Constant(5.0)
@@ -508,7 +508,7 @@ class TestCoSimulationElectrothermal(unittest.TestCase):
         self.assertGreater(cell.outputs[3], 0.0)  # SOC
         self.assertLessEqual(cell.outputs[3], 1.0)
 
-    def test_q_heat_nonzero_during_discharge(self):
+    def test_q_dot_nonzero_during_discharge(self):
         """Q_dot must be strictly positive when a discharge current flows."""
         cell = CellCoSimElectrothermal(initial_soc=1.0, dt=10.0)
         I_src = Constant(5.0)
