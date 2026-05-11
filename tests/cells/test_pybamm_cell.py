@@ -555,5 +555,194 @@ class TestCoSimulationElectrothermal(unittest.TestCase):
         )
 
 
+class TestTerminationEvents(unittest.TestCase):
+    """Tests that termination_events() stops the simulation at voltage cut-offs.
+
+    Both the non-CoSim (``_CellBase``) and CoSim (``_CoSimCellBase``) families
+    are tested.  A very low initial SOC combined with a high discharge current
+    ensures the lower voltage cut-off is reached quickly.  Without the events
+    wired in, the non-CoSim cell would diverge to nonsensical negative voltages,
+    and the CoSim cell would continue forever at the clamped cut-off value.
+
+    PyBaMM's ``Chen2020`` parameter set has:
+      * Lower voltage cut-off: 2.5 V
+      * Upper voltage cut-off: 4.2 V
+    """
+
+    # -- helpers ---------------------------------------------------------------
+
+    def _run_with_events(self, cell, current, T_input_port, T_value, cosim_dt=None):
+        """Build a Simulation, wire termination events, and run for up to 600 s."""
+        I_src = Constant(current)
+        T_src = Constant(T_value)
+        dt_ps = cosim_dt if cosim_dt is not None else 5.0
+        sim = Simulation(
+            blocks=[I_src, T_src, cell],
+            connections=[
+                Connection(I_src, cell["I"]),
+                Connection(T_src, cell[T_input_port]),
+            ],
+            dt=dt_ps,
+            Solver=ESDIRK43,
+        )
+        for event in cell.termination_events(sim):
+            sim.add_event(event)
+        sim.run(600)
+        return sim
+
+    def _run_without_events(self, cell, current, T_input_port, T_value, cosim_dt=None):
+        """Same but without registering termination events."""
+        I_src = Constant(current)
+        T_src = Constant(T_value)
+        dt_ps = cosim_dt if cosim_dt is not None else 5.0
+        sim = Simulation(
+            blocks=[I_src, T_src, cell],
+            connections=[
+                Connection(I_src, cell["I"]),
+                Connection(T_src, cell[T_input_port]),
+            ],
+            dt=dt_ps,
+            Solver=ESDIRK43,
+        )
+        sim.run(600)
+        return sim
+
+    # -- non-CoSim (CellElectrical) --------------------------------------------
+
+    def test_non_cosim_stops_before_negative_voltage(self):
+        """With events registered, CellElectrical must stop before V < 0.
+
+        Without events PathSim integrates through the physical cutoff and the
+        ODE produces nonsensical negative voltages.  With events wired in the
+        simulation must halt at or just above the lower cut-off.
+        """
+        cell = CellElectrical(initial_soc=0.02)
+        sim = self._run_with_events(cell, current=10.0, T_input_port="T_cell", T_value=298.15)
+        V_final = float(cell.outputs[0])
+        # Simulation must have stopped early (well before 600 s)
+        self.assertLess(sim.time, 600.0, "simulation did not stop early")
+        # Voltage must be at or above the lower cut-off, never negative
+        self.assertGreaterEqual(
+            V_final,
+            cell._v_lower - 0.5,  # small tolerance for step overshoot
+            f"terminal voltage {V_final:.3f} V is far below cut-off {cell._v_lower} V",
+        )
+        self.assertGreater(
+            V_final,
+            0.0,
+            f"terminal voltage went negative ({V_final:.3f} V) despite termination events",
+        )
+
+    def test_non_cosim_without_events_continues_past_cutoff(self):
+        """Without events, CellElectrical integrates past the cut-off (regression guard).
+
+        This test confirms the *bug* that termination_events() is designed to fix:
+        PathSim does not stop on its own, and the voltage diverges wildly.
+        """
+        cell = CellElectrical(initial_soc=0.02)
+        sim = self._run_without_events(cell, current=10.0, T_input_port="T_cell", T_value=298.15)
+        V_final = float(cell.outputs[0])
+        # Without events the simulation runs the full 600 s
+        self.assertAlmostEqual(sim.time, 600.0, delta=10.0)
+        # And the voltage should have diverged to a physically impossible value
+        self.assertLess(
+            V_final,
+            0.0,
+            "expected voltage divergence without termination events, got "
+            f"V={V_final:.3f} V — the bug may have been fixed elsewhere",
+        )
+
+    def test_non_cosim_termination_events_returns_two_events(self):
+        """termination_events() must return exactly two ZeroCrossingDown instances."""
+        from pathsim.events import ZeroCrossingDown
+
+        cell = CellElectrical()
+        I_src = Constant(1.0)
+        T_src = Constant(298.15)
+        sim = Simulation(
+            blocks=[I_src, T_src, cell],
+            connections=[Connection(I_src, cell["I"]), Connection(T_src, cell["T_cell"])],
+            dt=1.0,
+            Solver=ESDIRK43,
+        )
+        events = cell.termination_events(sim)
+        self.assertEqual(len(events), 2)
+        for e in events:
+            self.assertIsInstance(e, ZeroCrossingDown)
+
+    def test_non_cosim_cutoff_values_match_parameter_values(self):
+        """_v_lower/_v_upper must match the Chen2020 parameter set."""
+        pv = pybamm.ParameterValues("Chen2020")
+        cell = CellElectrical(parameter_values=pv)
+        self.assertAlmostEqual(cell._v_lower, float(pv["Lower voltage cut-off [V]"]))
+        self.assertAlmostEqual(cell._v_upper, float(pv["Upper voltage cut-off [V]"]))
+
+    # -- CoSim (CellCoSimElectrical) -------------------------------------------
+
+    def test_cosim_stops_before_negative_voltage(self):
+        """With events registered, CellCoSimElectrical must stop at the cut-off.
+
+        Without events PyBaMM freezes internally but PathSim keeps ticking
+        forever with the clamped output (2.5 V). With events wired in,
+        PathSim must stop as soon as the voltage first touches the cut-off.
+        """
+        cell = CellCoSimElectrical(initial_soc=0.02, dt=10.0)
+        sim = self._run_with_events(
+            cell, current=10.0, T_input_port="T_cell", T_value=298.15, cosim_dt=10.0
+        )
+        V_final = float(cell.outputs[0])
+        self.assertLess(sim.time, 600.0, "CoSim simulation did not stop early")
+        self.assertGreaterEqual(
+            V_final,
+            cell._v_lower - 0.5,
+            f"terminal voltage {V_final:.3f} V is far below cut-off {cell._v_lower} V",
+        )
+
+    def test_cosim_without_events_runs_full_duration(self):
+        """Without events, CellCoSimElectrical runs the full duration with frozen output.
+
+        This is the CoSim-side symptom of the missing stop condition: PyBaMM
+        clamps at the cut-off and the simulation never terminates early.
+        """
+        cell = CellCoSimElectrical(initial_soc=0.02, dt=10.0)
+        sim = self._run_without_events(
+            cell, current=10.0, T_input_port="T_cell", T_value=298.15, cosim_dt=10.0
+        )
+        # Simulation must have run the full 600 s (no early stop)
+        self.assertAlmostEqual(sim.time, 600.0, delta=10.0)
+        # Voltage must be frozen at the cut-off (PyBaMM clamps, does not diverge)
+        self.assertAlmostEqual(
+            float(cell.outputs[0]),
+            cell._v_lower,
+            delta=0.1,
+            msg="CoSim output should be clamped at lower cut-off without events",
+        )
+
+    def test_cosim_termination_events_returns_two_events(self):
+        """termination_events() must return exactly two ZeroCrossingDown instances."""
+        from pathsim.events import ZeroCrossingDown
+
+        cell = CellCoSimElectrical(dt=1.0)
+        I_src = Constant(1.0)
+        T_src = Constant(298.15)
+        sim = Simulation(
+            blocks=[I_src, T_src, cell],
+            connections=[Connection(I_src, cell["I"]), Connection(T_src, cell["T_cell"])],
+            dt=1.0,
+            Solver=ESDIRK43,
+        )
+        events = cell.termination_events(sim)
+        self.assertEqual(len(events), 2)
+        for e in events:
+            self.assertIsInstance(e, ZeroCrossingDown)
+
+    def test_cosim_cutoff_values_match_parameter_values(self):
+        """_v_lower/_v_upper must match the Chen2020 parameter set (CoSim block)."""
+        pv = pybamm.ParameterValues("Chen2020")
+        cell = CellCoSimElectrical(parameter_values=pv, dt=1.0)
+        self.assertAlmostEqual(cell._v_lower, float(pv["Lower voltage cut-off [V]"]))
+        self.assertAlmostEqual(cell._v_upper, float(pv["Upper voltage cut-off [V]"]))
+
+
 if __name__ == "__main__":
     unittest.main()
