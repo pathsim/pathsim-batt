@@ -81,12 +81,15 @@ class _CellBase(DynamicalSystem):
             )
 
         self._parameter_values = _prepare_parameter_values(parameter_values)
-        self._v_lower = float(
-            self._parameter_values["Lower voltage cut-off [V]"]
-        )
-        self._v_upper = float(
-            self._parameter_values["Upper voltage cut-off [V]"]
-        )
+        try:
+            self._v_lower = float(self._parameter_values["Lower voltage cut-off [V]"])
+            self._v_upper = float(self._parameter_values["Upper voltage cut-off [V]"])
+        except KeyError as exc:
+            raise ValueError(
+                f"parameter_values is missing a voltage cut-off entry: {exc}. "
+                "Ensure your parameter set defines both 'Lower voltage cut-off [V]' "
+                "and 'Upper voltage cut-off [V]'."
+            ) from exc
 
         pybamm_solver = pybamm_solver or pybamm.CasadiSolver(mode="safe")
 
@@ -221,12 +224,15 @@ class _CoSimCellBase(Wrapper):
 
         self._model = model
         self._parameter_values = _prepare_parameter_values(parameter_values)
-        self._v_lower = float(
-            self._parameter_values["Lower voltage cut-off [V]"]
-        )
-        self._v_upper = float(
-            self._parameter_values["Upper voltage cut-off [V]"]
-        )
+        try:
+            self._v_lower = float(self._parameter_values["Lower voltage cut-off [V]"])
+            self._v_upper = float(self._parameter_values["Upper voltage cut-off [V]"])
+        except KeyError as exc:
+            raise ValueError(
+                f"parameter_values is missing a voltage cut-off entry: {exc}. "
+                "Ensure your parameter set defines both 'Lower voltage cut-off [V]' "
+                "and 'Upper voltage cut-off [V]'."
+            ) from exc
         self._pybamm_solver = pybamm_solver or pybamm.IDAKLUSolver()
         self._q_nominal = float(self._parameter_values["Nominal cell capacity [A.h]"])
 
@@ -250,12 +256,15 @@ class _CoSimCellBase(Wrapper):
         return sim
 
     def _initial_outputs(self) -> npt.NDArray[np.float64]:
-        """Compute physically correct outputs at t=0 from the built PyBaMM model.
+        """Compute outputs at t=0 from the built PyBaMM model using default inputs.
 
         Uses the same CasADi export approach as ``_CellBase`` to evaluate each
-        output variable at the initial state vector and zero current, so that
-        the zero-order-held output port reflects the true open-circuit voltage
-        before the first macro-step fires.
+        output variable at the initial state vector.  The evaluation uses
+        ``_DEFAULT_INPUTS`` (0 A current, 298.15 K ambient temperature) because
+        the wired input ports are not yet available at construction time.  The
+        resulting open-circuit voltage is therefore physically meaningful but does
+        not account for a non-default initial temperature or a non-zero current at
+        t=0.
         """
         all_out_vars = self._pybamm_output_vars + ["Discharge capacity [A.h]"]
         casadi_objs = self._sim.built_model.export_casadi_objects(
@@ -264,19 +273,27 @@ class _CoSimCellBase(Wrapper):
         )
         t_sym = casadi_objs["t"]
         x_sym = casadi_objs["x"]
+        z_sym = casadi_objs["z"]
         p_sym = casadi_objs["inputs"]
         p0 = casadi.DM(list(_DEFAULT_INPUTS.values()))
         x0 = casadi.Function("x0", [p_sym], [casadi_objs["x0"]])(p0)
+        # Algebraic initial conditions (empty for ODE models such as SPMe;
+        # non-empty for DAE models such as DFN).
+        z0 = casadi.Function("z0", [p_sym], [casadi_objs["z0"]])(p0)
 
         outputs: list[float] = []
         for name in self._pybamm_output_vars:
-            fn = casadi.Function("v", [t_sym, x_sym, p_sym], [casadi_objs["variables"][name]])
-            outputs.append(float(fn(0.0, x0, p0)))
+            fn = casadi.Function(
+                "v", [t_sym, x_sym, z_sym, p_sym], [casadi_objs["variables"][name]]
+            )
+            outputs.append(float(fn(0.0, x0, z0, p0)))
 
         q_dis_fn = casadi.Function(
-            "q", [t_sym, x_sym, p_sym], [casadi_objs["variables"]["Discharge capacity [A.h]"]]
+            "q",
+            [t_sym, x_sym, z_sym, p_sym],
+            [casadi_objs["variables"]["Discharge capacity [A.h]"]],
         )
-        q_dis = float(q_dis_fn(0.0, x0, p0))
+        q_dis = float(q_dis_fn(0.0, x0, z0, p0))
         soc = max(0.0, min(1.0, self._initial_soc - q_dis / self._q_nominal))
         outputs.append(soc)
 
@@ -296,6 +313,7 @@ class _CoSimCellBase(Wrapper):
         outputs.append(soc)
 
         self._last_outputs = np.array(outputs, dtype=np.float64)
+        self.outputs.update_from_array(self._last_outputs)
         V = outputs[0]
         if V <= self._v_lower:
             raise StopSimulation(f"undervoltage: V={V:.4f} V <= {self._v_lower} V")
