@@ -23,6 +23,11 @@ _DEFAULT_INPUTS = {
     "Ambient temperature [K]": 298.15,
 }
 
+# The PyBaMM variable name used for voltage cut-off detection.
+# Both base classes locate it by name in ``_pybamm_output_vars`` at construction
+# time, so subclasses may place it at any position in the list.
+_TERMINAL_VOLTAGE_VAR = "Terminal voltage [V]"
+
 
 def _prepare_parameter_values(
     parameter_values: pybamm.ParameterValues | None,
@@ -59,7 +64,9 @@ class _CellBase(DynamicalSystem):
 
     Subclasses set ``_thermal_option`` and ``_pybamm_output_vars`` to select the
     thermal sub-model and define which PyBaMM variables map to the block's
-    output ports (SOC is always appended last).
+    output ports (SOC is always appended last).  ``_pybamm_output_vars`` must
+    contain ``_TERMINAL_VOLTAGE_VAR``; its position in the list is found
+    dynamically.
     """
 
     _thermal_option: str = ""
@@ -74,6 +81,14 @@ class _CellBase(DynamicalSystem):
         pybamm_solver: pybamm.BaseSolver | None = None,
     ) -> None:
         self._initial_soc = float(initial_soc)
+
+        try:
+            self._v_idx = self._pybamm_output_vars.index(_TERMINAL_VOLTAGE_VAR)
+        except ValueError:
+            raise TypeError(
+                f"{type(self).__name__}._pybamm_output_vars must contain "
+                f"'{_TERMINAL_VOLTAGE_VAR}'."
+            ) from None
 
         if model is None:
             model = pybamm.lithium_ion.SPMe(
@@ -155,6 +170,7 @@ class _CellBase(DynamicalSystem):
 
         v_lower = self._v_lower
         v_upper = self._v_upper
+        v_idx = self._v_idx
 
         def func_alg(x, u, t):
             xv = casadi.DM(x.reshape(-1, 1))
@@ -163,7 +179,7 @@ class _CellBase(DynamicalSystem):
             q_dis = float(out_var_fns["Discharge capacity [A.h]"](t, xv, p))
             soc = max(0.0, min(1.0, initial_soc_val - q_dis / q_nominal))
             outputs.append(soc)
-            V = outputs[0]
+            V = outputs[v_idx]
             if V <= v_lower:
                 raise StopSimulation(f"undervoltage: V={V:.4f} V <= {v_lower} V")
             if V >= v_upper:
@@ -198,6 +214,8 @@ class _CoSimCellBase(Wrapper):
     differential-algebraic solve internally.
 
     Subclasses set ``_thermal_option``, ``_pybamm_output_vars`` and port labels.
+    ``_pybamm_output_vars`` must contain ``_TERMINAL_VOLTAGE_VAR``; its position
+    in the list is found dynamically.
     """
 
     _thermal_option: str = ""
@@ -213,6 +231,14 @@ class _CoSimCellBase(Wrapper):
         dt: float = 1.0,
     ) -> None:
         self._initial_soc = float(initial_soc)
+
+        try:
+            self._v_idx = self._pybamm_output_vars.index(_TERMINAL_VOLTAGE_VAR)
+        except ValueError:
+            raise TypeError(
+                f"{type(self).__name__}._pybamm_output_vars must contain "
+                f"'{_TERMINAL_VOLTAGE_VAR}'."
+            ) from None
         self._dt = float(dt)
         if self._dt <= 0.0:
             raise ValueError("dt must be positive")
@@ -314,7 +340,7 @@ class _CoSimCellBase(Wrapper):
 
         self._last_outputs = np.array(outputs, dtype=np.float64)
         self.outputs.update_from_array(self._last_outputs)
-        V = outputs[0]
+        V = outputs[self._v_idx]
         if V <= self._v_lower:
             raise StopSimulation(f"undervoltage: V={V:.4f} V <= {self._v_lower} V")
         if V >= self._v_upper:
