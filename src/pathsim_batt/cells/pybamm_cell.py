@@ -14,7 +14,7 @@ import numpy as np
 import numpy.typing as npt
 import pybamm
 from pathsim.blocks import DynamicalSystem, Wrapper
-from pathsim.events import ZeroCrossingDown
+from pathsim.exceptions import StopSimulation
 
 # HELPERS =============================================================================
 
@@ -150,6 +150,9 @@ class _CellBase(DynamicalSystem):
             p = _pack(u)
             return np.array(jac_fn(t, xv, p))
 
+        v_lower = self._v_lower
+        v_upper = self._v_upper
+
         def func_alg(x, u, t):
             xv = casadi.DM(x.reshape(-1, 1))
             p = _pack(u)
@@ -157,6 +160,11 @@ class _CellBase(DynamicalSystem):
             q_dis = float(out_var_fns["Discharge capacity [A.h]"](t, xv, p))
             soc = max(0.0, min(1.0, initial_soc_val - q_dis / q_nominal))
             outputs.append(soc)
+            V = outputs[0]
+            if V <= v_lower:
+                raise StopSimulation(f"undervoltage: V={V:.4f} V <= {v_lower} V")
+            if V >= v_upper:
+                raise StopSimulation(f"overvoltage: V={V:.4f} V >= {v_upper} V")
             return np.array(outputs)
 
         x0_fn = casadi.Function("x0", [p_sym], [casadi_objs["x0"]])
@@ -172,57 +180,6 @@ class _CellBase(DynamicalSystem):
 
     def __len__(self) -> int:
         return len(self._pybamm_output_vars) + 1
-
-    def termination_events(self, sim) -> list:
-        """Return PathSim events that mirror PyBaMM's voltage cut-off conditions.
-
-        Registers two :class:`~pathsim.events.ZeroCrossingDown` events on this
-        cell's terminal voltage output (port ``V``, index 0):
-
-        * **Under-voltage** — fires when ``V`` falls to ``Lower voltage
-          cut-off [V]`` (identical to PyBaMM's ``Minimum voltage [V]``
-          termination event).
-        * **Over-voltage** — fires when ``V`` rises to ``Upper voltage
-          cut-off [V]`` (identical to PyBaMM's ``Maximum voltage [V]``
-          termination event).
-
-        Each event calls ``sim.stop()`` when it resolves, halting the PathSim
-        time-stepping loop at the crossing point.
-
-        Parameters
-        ----------
-        sim : pathsim.Simulation
-            The simulation this cell is part of.  The events call
-            ``sim.stop()`` on resolution.
-
-        Returns
-        -------
-        list[ZeroCrossingDown]
-            Two events; add them to the simulation with
-            ``sim.add_event(e)`` or ``for e in cell.termination_events(sim): sim.add_event(e)``.
-
-        Example
-        -------
-        .. code-block:: python
-
-            sim = Simulation(blocks=[...], connections=[...], dt=1.0, Solver=ESDIRK43)
-            for event in cell.termination_events(sim):
-                sim.add_event(event)
-            sim.run(3600)
-        """
-        v_lower = self._v_lower
-        v_upper = self._v_upper
-        outputs = self.outputs
-
-        under_voltage = ZeroCrossingDown(
-            func_evt=lambda t: float(outputs[0]) - v_lower,
-            func_act=lambda t: sim.stop(),
-        )
-        over_voltage = ZeroCrossingDown(
-            func_evt=lambda t: v_upper - float(outputs[0]),
-            func_act=lambda t: sim.stop(),
-        )
-        return [under_voltage, over_voltage]
 
     def reset(self) -> None:
         super().reset()
@@ -277,11 +234,6 @@ class _CoSimCellBase(Wrapper):
 
         self._last_outputs: npt.NDArray[np.float64] = self._initial_outputs()
 
-        # registered stop callbacks — populated by termination_events()
-        self._term_callbacks: list = []
-        # flag set by _discrete_step so update() knows when fresh outputs exist
-        self._just_stepped: bool = False
-
         super().__init__(func=self._discrete_step, T=self._dt, tau=self._dt)
 
         # ensure outputs are valid before first scheduled sample
@@ -302,10 +254,8 @@ class _CoSimCellBase(Wrapper):
 
         Uses the same CasADi export approach as ``_CellBase`` to evaluate each
         output variable at the initial state vector and zero current, so that
-        the terminal voltage placeholder is the true open-circuit voltage.  This
-        ensures that voltage-threshold events (``termination_events()``) have a
-        correct, positive starting value and can detect the first downward
-        crossing correctly.
+        the zero-order-held output port reflects the true open-circuit voltage
+        before the first macro-step fires.
         """
         all_out_vars = self._pybamm_output_vars + ["Discharge capacity [A.h]"]
         casadi_objs = self._sim.built_model.export_casadi_objects(
@@ -346,82 +296,20 @@ class _CoSimCellBase(Wrapper):
         outputs.append(soc)
 
         self._last_outputs = np.array(outputs, dtype=np.float64)
-        self._just_stepped = True
+        V = outputs[0]
+        if V <= self._v_lower:
+            raise StopSimulation(f"undervoltage: V={V:.4f} V <= {self._v_lower} V")
+        if V >= self._v_upper:
+            raise StopSimulation(f"overvoltage: V={V:.4f} V >= {self._v_upper} V")
         return self._last_outputs
-
-    def update(self, t: float) -> None:
-        """Check voltage cut-off callbacks after each PyBaMM macro-step.
-
-        PathSim calls ``update()`` on every block after each event resolves
-        (including after the internal :class:`~pathsim.events.Schedule` event
-        fires and updates outputs).  The ``_just_stepped`` flag distinguishes
-        this post-step call from the earlier pre-event call where outputs are
-        still stale, ensuring the termination check only runs once per
-        macro-step and only after fresh outputs are available.
-        """
-        if self._just_stepped:
-            self._just_stepped = False
-            V = float(self.outputs[0])
-            for cb in self._term_callbacks:
-                cb(V)
 
     def __len__(self) -> int:
         return len(self._pybamm_output_vars) + 1
-
-    def termination_events(self, sim) -> list:
-        """Return PathSim events that mirror PyBaMM's voltage cut-off conditions.
-
-        For co-simulation blocks PyBaMM's own solver clamps the terminal voltage
-        at the cut-off and stops advancing internally, but never signals PathSim.
-        This method registers **post-step callbacks** (called from
-        :meth:`update` after each :class:`~pathsim.events.Schedule` macro-step
-        fires) that call ``sim.stop()`` as soon as the clamped output is
-        detected.  Two :class:`~pathsim.events.ZeroCrossingDown` events are
-        also returned for API consistency with
-        :class:`_CellBase.termination_events` — add them to the simulation
-        with ``sim.add_event(e)`` as a belt-and-suspenders complement for
-        adaptive-stepping scenarios.
-
-        Parameters
-        ----------
-        sim : pathsim.Simulation
-            The simulation this cell is part of.
-
-        Returns
-        -------
-        list[ZeroCrossingDown]
-            Two events (under-voltage, over-voltage).
-        """
-        v_lower = self._v_lower
-        v_upper = self._v_upper
-
-        def _under_cb(V: float) -> None:
-            if V <= v_lower:
-                sim.stop()
-
-        def _over_cb(V: float) -> None:
-            if V >= v_upper:
-                sim.stop()
-
-        self._term_callbacks.extend([_under_cb, _over_cb])
-
-        # Belt-and-suspenders PathSim events (API parity with _CellBase).
-        outputs = self.outputs
-        under_voltage = ZeroCrossingDown(
-            func_evt=lambda t: float(outputs[0]) - v_lower,
-            func_act=lambda t: sim.stop(),
-        )
-        over_voltage = ZeroCrossingDown(
-            func_evt=lambda t: v_upper - float(outputs[0]),
-            func_act=lambda t: sim.stop(),
-        )
-        return [under_voltage, over_voltage]
 
     def reset(self) -> None:
         super().reset()
         self._sim = self._build_sim()
         self._last_outputs = self._initial_outputs()
-        self._just_stepped = False
         self.outputs.update_from_array(self._last_outputs)
 
 
