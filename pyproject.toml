@@ -25,8 +25,7 @@ classifiers = [
     "Topic :: Scientific/Engineering",
 ]
 dependencies = [
-    # TODO: unpin once StopSimulation is released to PyPI
-    "pathsim @ git+https://github.com/pathsim/pathsim.git@fca3978586a887d0178422a64d48b80537856e48",
+    "pathsim>=0.22",
     "pybamm>=25.12",
 ]
 
