@@ -555,5 +555,98 @@ class TestCoSimulationElectrothermal(unittest.TestCase):
         )
 
 
+class TestTerminationEvents(unittest.TestCase):
+    """Tests that voltage cut-offs automatically stop the PathSim simulation.
+
+    Both the non-CoSim (``_CellBase``) and CoSim (``_CoSimCellBase``) families
+    are tested.  A very low initial SOC combined with a high discharge current
+    ensures the lower voltage cut-off is reached quickly.
+
+    Cut-offs are enforced by raising ``StopSimulation`` inside the block — no
+    user wiring is required.
+
+    PyBaMM's ``Chen2020`` parameter set has:
+      * Lower voltage cut-off: 2.5 V
+      * Upper voltage cut-off: 4.2 V
+    """
+
+    # -- helpers ---------------------------------------------------------------
+
+    def _run(self, cell, current, T_input_port, T_value, cosim_dt=None):
+        """Build a Simulation and run for up to 600 s."""
+        I_src = Constant(current)
+        T_src = Constant(T_value)
+        dt_ps = cosim_dt if cosim_dt is not None else 5.0
+        sim = Simulation(
+            blocks=[I_src, T_src, cell],
+            connections=[
+                Connection(I_src, cell["I"]),
+                Connection(T_src, cell[T_input_port]),
+            ],
+            dt=dt_ps,
+            Solver=ESDIRK43,
+        )
+        sim.run(600)
+        return sim
+
+    # -- non-CoSim (CellElectrical) --------------------------------------------
+
+    def test_non_cosim_stops_before_negative_voltage(self):
+        """CellElectrical must stop automatically before V goes negative.
+
+        ``StopSimulation`` is raised from ``func_alg`` the moment voltage
+        reaches the lower cut-off, so PathSim halts without any user wiring.
+        """
+        cell = CellElectrical(initial_soc=0.02)
+        sim = self._run(cell, current=10.0, T_input_port="T_cell", T_value=298.15)
+        V_final = float(cell.outputs[0])
+        self.assertLess(sim.time, 600.0, "simulation did not stop early")
+        self.assertGreater(
+            V_final,
+            0.0,
+            f"terminal voltage went negative ({V_final:.3f} V)",
+        )
+        self.assertGreaterEqual(
+            V_final,
+            cell._v_lower - 0.5,
+            f"terminal voltage {V_final:.3f} V is far below cut-off {cell._v_lower} V",
+        )
+
+    def test_non_cosim_cutoff_values_match_parameter_values(self):
+        """_v_lower/_v_upper must match the Chen2020 parameter set."""
+        pv = pybamm.ParameterValues("Chen2020")
+        cell = CellElectrical(parameter_values=pv)
+        self.assertAlmostEqual(cell._v_lower, float(pv["Lower voltage cut-off [V]"]))
+        self.assertAlmostEqual(cell._v_upper, float(pv["Upper voltage cut-off [V]"]))
+
+    # -- CoSim (CellCoSimElectrical) -------------------------------------------
+
+    def test_cosim_stops_at_cutoff(self):
+        """CellCoSimElectrical must stop automatically when voltage hits the cut-off.
+
+        ``StopSimulation`` is raised from ``_discrete_step`` as soon as PyBaMM
+        clamps to the lower cut-off, so PathSim halts instead of running forever
+        with frozen output.
+        """
+        cell = CellCoSimElectrical(initial_soc=0.02, dt=10.0)
+        sim = self._run(
+            cell, current=10.0, T_input_port="T_cell", T_value=298.15, cosim_dt=10.0
+        )
+        V_final = float(cell.outputs[0])
+        self.assertLess(sim.time, 600.0, "CoSim simulation did not stop early")
+        self.assertGreaterEqual(
+            V_final,
+            cell._v_lower - 0.5,
+            f"terminal voltage {V_final:.3f} V is far below cut-off {cell._v_lower} V",
+        )
+
+    def test_cosim_cutoff_values_match_parameter_values(self):
+        """_v_lower/_v_upper must match the Chen2020 parameter set (CoSim block)."""
+        pv = pybamm.ParameterValues("Chen2020")
+        cell = CellCoSimElectrical(parameter_values=pv, dt=1.0)
+        self.assertAlmostEqual(cell._v_lower, float(pv["Lower voltage cut-off [V]"]))
+        self.assertAlmostEqual(cell._v_upper, float(pv["Upper voltage cut-off [V]"]))
+
+
 if __name__ == "__main__":
     unittest.main()

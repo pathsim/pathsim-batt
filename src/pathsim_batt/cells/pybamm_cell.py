@@ -14,6 +14,7 @@ import numpy as np
 import numpy.typing as npt
 import pybamm
 from pathsim.blocks import DynamicalSystem, Wrapper
+from pathsim.exceptions import StopSimulation
 
 # HELPERS =============================================================================
 
@@ -21,6 +22,11 @@ _DEFAULT_INPUTS = {
     "Current function [A]": 0.0,
     "Ambient temperature [K]": 298.15,
 }
+
+# The PyBaMM variable name used for voltage cut-off detection.
+# Both base classes locate it by name in ``_pybamm_output_vars`` at construction
+# time, so subclasses may place it at any position in the list.
+_TERMINAL_VOLTAGE_VAR = "Terminal voltage [V]"
 
 
 def _prepare_parameter_values(
@@ -58,7 +64,9 @@ class _CellBase(DynamicalSystem):
 
     Subclasses set ``_thermal_option`` and ``_pybamm_output_vars`` to select the
     thermal sub-model and define which PyBaMM variables map to the block's
-    output ports (SOC is always appended last).
+    output ports (SOC is always appended last).  ``_pybamm_output_vars`` must
+    contain ``_TERMINAL_VOLTAGE_VAR``; its position in the list is found
+    dynamically.
     """
 
     _thermal_option: str = ""
@@ -74,12 +82,29 @@ class _CellBase(DynamicalSystem):
     ) -> None:
         self._initial_soc = float(initial_soc)
 
+        try:
+            self._v_idx = self._pybamm_output_vars.index(_TERMINAL_VOLTAGE_VAR)
+        except ValueError:
+            raise TypeError(
+                f"{type(self).__name__}._pybamm_output_vars must contain "
+                f"'{_TERMINAL_VOLTAGE_VAR}'."
+            ) from None
+
         if model is None:
             model = pybamm.lithium_ion.SPMe(
                 options={"thermal": self._thermal_option, **self._thermal_extra_options}
             )
 
         self._parameter_values = _prepare_parameter_values(parameter_values)
+        try:
+            self._v_lower = float(self._parameter_values["Lower voltage cut-off [V]"])
+            self._v_upper = float(self._parameter_values["Upper voltage cut-off [V]"])
+        except KeyError as exc:
+            raise ValueError(
+                f"parameter_values is missing a voltage cut-off entry: {exc}. "
+                "Ensure your parameter set defines both 'Lower voltage cut-off [V]' "
+                "and 'Upper voltage cut-off [V]'."
+            ) from exc
 
         pybamm_solver = pybamm_solver or pybamm.CasadiSolver(mode="safe")
 
@@ -143,6 +168,10 @@ class _CellBase(DynamicalSystem):
             p = _pack(u)
             return np.array(jac_fn(t, xv, p))
 
+        v_lower = self._v_lower
+        v_upper = self._v_upper
+        v_idx = self._v_idx
+
         def func_alg(x, u, t):
             xv = casadi.DM(x.reshape(-1, 1))
             p = _pack(u)
@@ -150,6 +179,11 @@ class _CellBase(DynamicalSystem):
             q_dis = float(out_var_fns["Discharge capacity [A.h]"](t, xv, p))
             soc = max(0.0, min(1.0, initial_soc_val - q_dis / q_nominal))
             outputs.append(soc)
+            V = outputs[v_idx]
+            if V <= v_lower:
+                raise StopSimulation(f"undervoltage: V={V:.4f} V <= {v_lower} V")
+            if V >= v_upper:
+                raise StopSimulation(f"overvoltage: V={V:.4f} V >= {v_upper} V")
             return np.array(outputs)
 
         x0_fn = casadi.Function("x0", [p_sym], [casadi_objs["x0"]])
@@ -180,6 +214,8 @@ class _CoSimCellBase(Wrapper):
     differential-algebraic solve internally.
 
     Subclasses set ``_thermal_option``, ``_pybamm_output_vars`` and port labels.
+    ``_pybamm_output_vars`` must contain ``_TERMINAL_VOLTAGE_VAR``; its position
+    in the list is found dynamically.
     """
 
     _thermal_option: str = ""
@@ -195,6 +231,14 @@ class _CoSimCellBase(Wrapper):
         dt: float = 1.0,
     ) -> None:
         self._initial_soc = float(initial_soc)
+
+        try:
+            self._v_idx = self._pybamm_output_vars.index(_TERMINAL_VOLTAGE_VAR)
+        except ValueError:
+            raise TypeError(
+                f"{type(self).__name__}._pybamm_output_vars must contain "
+                f"'{_TERMINAL_VOLTAGE_VAR}'."
+            ) from None
         self._dt = float(dt)
         if self._dt <= 0.0:
             raise ValueError("dt must be positive")
@@ -206,6 +250,15 @@ class _CoSimCellBase(Wrapper):
 
         self._model = model
         self._parameter_values = _prepare_parameter_values(parameter_values)
+        try:
+            self._v_lower = float(self._parameter_values["Lower voltage cut-off [V]"])
+            self._v_upper = float(self._parameter_values["Upper voltage cut-off [V]"])
+        except KeyError as exc:
+            raise ValueError(
+                f"parameter_values is missing a voltage cut-off entry: {exc}. "
+                "Ensure your parameter set defines both 'Lower voltage cut-off [V]' "
+                "and 'Upper voltage cut-off [V]'."
+            ) from exc
         self._pybamm_solver = pybamm_solver or pybamm.IDAKLUSolver()
         self._q_nominal = float(self._parameter_values["Nominal cell capacity [A.h]"])
 
@@ -229,15 +282,48 @@ class _CoSimCellBase(Wrapper):
         return sim
 
     def _initial_outputs(self) -> npt.NDArray[np.float64]:
-        """Return placeholder outputs for t=0 before the first solver step.
+        """Compute outputs at t=0 from the built PyBaMM model using default inputs.
 
-        The co-simulation takes its first real sample at t=dt, so this
-        placeholder is only held for one macro-step.  All outputs are zero
-        except SOC, which is set to the user-supplied initial value.
+        Uses the same CasADi export approach as ``_CellBase`` to evaluate each
+        output variable at the initial state vector.  The evaluation uses
+        ``_DEFAULT_INPUTS`` (0 A current, 298.15 K ambient temperature) because
+        the wired input ports are not yet available at construction time.  The
+        resulting open-circuit voltage is therefore physically meaningful but does
+        not account for a non-default initial temperature or a non-zero current at
+        t=0.
         """
-        out = np.zeros(len(self._pybamm_output_vars) + 1, dtype=np.float64)
-        out[-1] = self._initial_soc  # SOC is always the last output
-        return out
+        all_out_vars = self._pybamm_output_vars + ["Discharge capacity [A.h]"]
+        casadi_objs = self._sim.built_model.export_casadi_objects(
+            all_out_vars,
+            input_parameter_order=list(_DEFAULT_INPUTS.keys()),
+        )
+        t_sym = casadi_objs["t"]
+        x_sym = casadi_objs["x"]
+        z_sym = casadi_objs["z"]
+        p_sym = casadi_objs["inputs"]
+        p0 = casadi.DM(list(_DEFAULT_INPUTS.values()))
+        x0 = casadi.Function("x0", [p_sym], [casadi_objs["x0"]])(p0)
+        # Algebraic initial conditions (empty for ODE models such as SPMe;
+        # non-empty for DAE models such as DFN).
+        z0 = casadi.Function("z0", [p_sym], [casadi_objs["z0"]])(p0)
+
+        outputs: list[float] = []
+        for name in self._pybamm_output_vars:
+            fn = casadi.Function(
+                "v", [t_sym, x_sym, z_sym, p_sym], [casadi_objs["variables"][name]]
+            )
+            outputs.append(float(fn(0.0, x0, z0, p0)))
+
+        q_dis_fn = casadi.Function(
+            "q",
+            [t_sym, x_sym, z_sym, p_sym],
+            [casadi_objs["variables"]["Discharge capacity [A.h]"]],
+        )
+        q_dis = float(q_dis_fn(0.0, x0, z0, p0))
+        soc = max(0.0, min(1.0, self._initial_soc - q_dis / self._q_nominal))
+        outputs.append(soc)
+
+        return np.array(outputs, dtype=np.float64)
 
     def _discrete_step(self, current: float, t_amb: float) -> npt.NDArray[np.float64]:
         inputs = {
@@ -253,10 +339,13 @@ class _CoSimCellBase(Wrapper):
         outputs.append(soc)
 
         self._last_outputs = np.array(outputs, dtype=np.float64)
-        return self._last_outputs
-
-    def update(self, t: float) -> None:
         self.outputs.update_from_array(self._last_outputs)
+        V = outputs[self._v_idx]
+        if V <= self._v_lower:
+            raise StopSimulation(f"undervoltage: V={V:.4f} V <= {self._v_lower} V")
+        if V >= self._v_upper:
+            raise StopSimulation(f"overvoltage: V={V:.4f} V >= {self._v_upper} V")
+        return self._last_outputs
 
     def __len__(self) -> int:
         return len(self._pybamm_output_vars) + 1
