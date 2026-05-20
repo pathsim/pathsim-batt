@@ -103,7 +103,9 @@ def _resolve_output_vars(
 
     if _SOC_CAPACITY_VAR in available:
         return resolved, _SOC_CAPACITY_VAR, None
-    return resolved, None, _pick_var(available, _SOC_DIRECT_CANDIDATES, "state of charge")
+    return resolved, None, _pick_var(
+        available, _SOC_DIRECT_CANDIDATES, "state of charge"
+    )
 
 
 def _detect_soc_direct_scale(
@@ -267,7 +269,6 @@ class _CellBase(DynamicalSystem):
 
         t_sym = casadi_objs["t"]
         x_sym = casadi_objs["x"]
-        z_sym = casadi_objs["z"]
         p_sym = casadi_objs["inputs"]
 
         rhs_fn = casadi.Function("rhs", [t_sym, x_sym, p_sym], [casadi_objs["rhs"]])

@@ -32,19 +32,23 @@ from pathsim_batt.cells import (
     CellElectrothermal,
 )
 
-
 # ---------------------------------------------------------------------------
 # Shared helpers
 # ---------------------------------------------------------------------------
 
 
-def _run_electrical(model, pv, current=1.0, t_cell=298.15, duration=2, dt=1.0, initial_soc=1.0):
+def _run_electrical(
+    model, pv, current=1.0, t_cell=298.15, duration=2, dt=1.0, initial_soc=1.0
+):
     cell = CellElectrical(model=model, parameter_values=pv, initial_soc=initial_soc)
     I_src = Constant(current)
     T_src = Constant(t_cell)
     sim = Simulation(
         blocks=[I_src, T_src, cell],
-        connections=[Connection(I_src, cell["I"]), Connection(T_src, cell["T_cell"])],
+        connections=[
+            Connection(I_src, cell["I"]),
+            Connection(T_src, cell["T_cell"]),
+        ],
         dt=dt,
         Solver=ESDIRK43,
     )
@@ -52,13 +56,18 @@ def _run_electrical(model, pv, current=1.0, t_cell=298.15, duration=2, dt=1.0, i
     return cell
 
 
-def _run_electrothermal(model, pv, current=1.0, t_amb=298.15, duration=2, dt=1.0, initial_soc=1.0):
+def _run_electrothermal(
+    model, pv, current=1.0, t_amb=298.15, duration=2, dt=1.0, initial_soc=1.0
+):
     cell = CellElectrothermal(model=model, parameter_values=pv, initial_soc=initial_soc)
     I_src = Constant(current)
     T_src = Constant(t_amb)
     sim = Simulation(
         blocks=[I_src, T_src, cell],
-        connections=[Connection(I_src, cell["I"]), Connection(T_src, cell["T_amb"])],
+        connections=[
+            Connection(I_src, cell["I"]),
+            Connection(T_src, cell["T_amb"]),
+        ],
         dt=dt,
         Solver=ESDIRK43,
     )
@@ -66,13 +75,20 @@ def _run_electrothermal(model, pv, current=1.0, t_amb=298.15, duration=2, dt=1.0
     return cell
 
 
-def _run_cosim_electrical(model, pv, current=1.0, t_cell=298.15, duration=2, cosim_dt=1.0, initial_soc=1.0):
-    cell = CellCoSimElectrical(model=model, parameter_values=pv, dt=cosim_dt, initial_soc=initial_soc)
+def _run_cosim_electrical(
+    model, pv, current=1.0, t_cell=298.15, duration=2, cosim_dt=1.0, initial_soc=1.0
+):
+    cell = CellCoSimElectrical(
+        model=model, parameter_values=pv, dt=cosim_dt, initial_soc=initial_soc
+    )
     I_src = Constant(current)
     T_src = Constant(t_cell)
     sim = Simulation(
         blocks=[I_src, T_src, cell],
-        connections=[Connection(I_src, cell["I"]), Connection(T_src, cell["T_cell"])],
+        connections=[
+            Connection(I_src, cell["I"]),
+            Connection(T_src, cell["T_cell"]),
+        ],
         dt=cosim_dt / 2,
         Solver=ESDIRK43,
     )
@@ -80,13 +96,20 @@ def _run_cosim_electrical(model, pv, current=1.0, t_cell=298.15, duration=2, cos
     return cell
 
 
-def _run_cosim_electrothermal(model, pv, current=1.0, t_amb=298.15, duration=2, cosim_dt=1.0, initial_soc=1.0):
-    cell = CellCoSimElectrothermal(model=model, parameter_values=pv, dt=cosim_dt, initial_soc=initial_soc)
+def _run_cosim_electrothermal(
+    model, pv, current=1.0, t_amb=298.15, duration=2, cosim_dt=1.0, initial_soc=1.0
+):
+    cell = CellCoSimElectrothermal(
+        model=model, parameter_values=pv, dt=cosim_dt, initial_soc=initial_soc
+    )
     I_src = Constant(current)
     T_src = Constant(t_amb)
     sim = Simulation(
         blocks=[I_src, T_src, cell],
-        connections=[Connection(I_src, cell["I"]), Connection(T_src, cell["T_amb"])],
+        connections=[
+            Connection(I_src, cell["I"]),
+            Connection(T_src, cell["T_amb"]),
+        ],
         dt=cosim_dt / 2,
         Solver=ESDIRK43,
     )
@@ -153,14 +176,14 @@ class TestSodiumIon(unittest.TestCase):
             )
 
     def test_cosim_electrical_raises_missing_heating_var(self):
-        """BasicDFN exports no heating variable — CellCoSimElectrical must raise ValueError."""
+        """BasicDFN has no heating variable — CellCoSimElectrical must raise."""
         with self.assertRaises(ValueError):
             CellCoSimElectrical(
                 model=pybamm.sodium_ion.BasicDFN(), parameter_values=self.pv, dt=1.0
             )
 
     def test_cosim_electrothermal_raises_missing_temp_var(self):
-        """BasicDFN exports no temperature variable — CellCoSimElectrothermal must raise ValueError."""
+        """BasicDFN has no temperature variable — CellCoSimElectrothermal must raise."""
         with self.assertRaises(ValueError):
             CellCoSimElectrothermal(
                 model=pybamm.sodium_ion.BasicDFN(), parameter_values=self.pv, dt=1.0
@@ -206,7 +229,10 @@ class TestLeadAcidLOQS(unittest.TestCase):
         T_src = Constant(298.15)
         sim = Simulation(
             blocks=[I_src, T_src, cell],
-            connections=[Connection(I_src, cell["I"]), Connection(T_src, cell["T_cell"])],
+            connections=[
+                Connection(I_src, cell["I"]),
+                Connection(T_src, cell["T_cell"]),
+            ],
             dt=0.5,
             Solver=ESDIRK43,
         )
@@ -223,7 +249,10 @@ class TestLeadAcidLOQS(unittest.TestCase):
         T_src = Constant(298.15)
         sim = Simulation(
             blocks=[I_src, T_src, cell],
-            connections=[Connection(I_src, cell["I"]), Connection(T_src, cell["T_amb"])],
+            connections=[
+                Connection(I_src, cell["I"]),
+                Connection(T_src, cell["T_amb"]),
+            ],
             dt=0.5,
             Solver=ESDIRK43,
         )
@@ -303,20 +332,32 @@ class TestECM(unittest.TestCase):
 
     def test_electrical_smoke(self):
         cell = _run_electrical(self._model(), self.pv, current=10.0)
-        _assert_electrical_outputs(self, cell, self.v_lo, self.v_hi, check_q_dot_nonneg=False)
+        _assert_electrical_outputs(
+            self, cell, self.v_lo, self.v_hi, check_q_dot_nonneg=False
+        )
 
     def test_electrothermal_smoke(self):
         cell = _run_electrothermal(self._model(), self.pv, current=10.0)
-        _assert_electrothermal_outputs(self, cell, self.v_lo, self.v_hi, check_q_dot_nonneg=False)
+        _assert_electrothermal_outputs(
+            self, cell, self.v_lo, self.v_hi, check_q_dot_nonneg=False
+        )
 
     def test_cosim_electrical_smoke(self):
-        # start at 0.9 to keep PyBaMM's Maximum-SoC event away from the initial condition
-        cell = _run_cosim_electrical(self._model(), self.pv, current=10.0, initial_soc=0.9)
-        _assert_electrical_outputs(self, cell, self.v_lo, self.v_hi, check_q_dot_nonneg=False)
+        # Start at 0.9: PyBaMM's Maximum-SoC event fires if initial == upper boundary.
+        cell = _run_cosim_electrical(
+            self._model(), self.pv, current=10.0, initial_soc=0.9
+        )
+        _assert_electrical_outputs(
+            self, cell, self.v_lo, self.v_hi, check_q_dot_nonneg=False
+        )
 
     def test_cosim_electrothermal_smoke(self):
-        cell = _run_cosim_electrothermal(self._model(), self.pv, current=10.0, initial_soc=0.9)
-        _assert_electrothermal_outputs(self, cell, self.v_lo, self.v_hi, check_q_dot_nonneg=False)
+        cell = _run_cosim_electrothermal(
+            self._model(), self.pv, current=10.0, initial_soc=0.9
+        )
+        _assert_electrothermal_outputs(
+            self, cell, self.v_lo, self.v_hi, check_q_dot_nonneg=False
+        )
 
     def test_electrical_soc_decreases(self):
         cell = _run_electrical(self._model(), self.pv, current=10.0, duration=60)
