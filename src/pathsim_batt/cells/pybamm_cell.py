@@ -23,11 +23,6 @@ _DEFAULT_INPUTS = {
     "Ambient temperature [K]": 298.15,
 }
 
-# Canonical PyBaMM variable name for terminal voltage (lithium-ion / lead-acid).
-# Equivalent-circuit and sodium-ion BasicDFN models export it under a different
-# name; ``_VOLTAGE_VAR_CANDIDATES`` lists all known aliases in priority order.
-_TERMINAL_VOLTAGE_VAR = "Terminal voltage [V]"
-
 _VOLTAGE_VAR_CANDIDATES: list[str] = [
     "Terminal voltage [V]",
     "Voltage [V]",
