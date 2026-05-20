@@ -103,8 +103,10 @@ def _resolve_output_vars(
 
     if _SOC_CAPACITY_VAR in available:
         return resolved, _SOC_CAPACITY_VAR, None
-    return resolved, None, _pick_var(
-        available, _SOC_DIRECT_CANDIDATES, "state of charge"
+    return (
+        resolved,
+        None,
+        _pick_var(available, _SOC_DIRECT_CANDIDATES, "state of charge"),
     )
 
 

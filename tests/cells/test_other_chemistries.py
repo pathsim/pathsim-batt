@@ -164,9 +164,7 @@ class TestSodiumIon(unittest.TestCase):
     def test_monolithic_electrical_raises_not_implemented(self):
         """BasicDFN is a DAE — CellElectrical must raise NotImplementedError."""
         with self.assertRaises(NotImplementedError):
-            CellElectrical(
-                model=pybamm.sodium_ion.BasicDFN(), parameter_values=self.pv
-            )
+            CellElectrical(model=pybamm.sodium_ion.BasicDFN(), parameter_values=self.pv)
 
     def test_monolithic_electrothermal_raises_not_implemented(self):
         """BasicDFN is a DAE — CellElectrothermal must raise NotImplementedError."""
@@ -222,8 +220,10 @@ class TestLeadAcidLOQS(unittest.TestCase):
         # for ODE models and errors, so use CasadiSolver explicitly.
         solver = pybamm.CasadiSolver(mode="safe")
         cell = CellCoSimElectrical(
-            model=self._model(), parameter_values=self.pv,
-            pybamm_solver=solver, dt=1.0,
+            model=self._model(),
+            parameter_values=self.pv,
+            pybamm_solver=solver,
+            dt=1.0,
         )
         I_src = Constant(17.0)
         T_src = Constant(298.15)
@@ -242,8 +242,10 @@ class TestLeadAcidLOQS(unittest.TestCase):
     def test_cosim_electrothermal_smoke(self):
         solver = pybamm.CasadiSolver(mode="safe")
         cell = CellCoSimElectrothermal(
-            model=self._model("lumped"), parameter_values=self.pv,
-            pybamm_solver=solver, dt=1.0,
+            model=self._model("lumped"),
+            parameter_values=self.pv,
+            pybamm_solver=solver,
+            dt=1.0,
         )
         I_src = Constant(17.0)
         T_src = Constant(298.15)
