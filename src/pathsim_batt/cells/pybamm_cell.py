@@ -196,8 +196,10 @@ class _CellBase(DynamicalSystem):
     Subclasses set ``_thermal_option`` and ``_pybamm_output_vars`` to select the
     thermal sub-model and define which PyBaMM variables map to the block's
     output ports (SOC is always appended last).  ``_pybamm_output_vars`` must
-    contain ``_TERMINAL_VOLTAGE_VAR``; its position in the list is found
-    dynamically.
+    contain a terminal-voltage entry — either the canonical
+    ``"Terminal voltage [V]"`` or any alias listed in
+    ``_VOLTAGE_VAR_CANDIDATES``; the actual name exported by the built model is
+    resolved automatically at construction time.
     """
 
     _thermal_option: str = ""
@@ -364,8 +366,10 @@ class _CoSimCellBase(Wrapper):
     differential-algebraic solve internally.
 
     Subclasses set ``_thermal_option``, ``_pybamm_output_vars`` and port labels.
-    ``_pybamm_output_vars`` must contain ``_TERMINAL_VOLTAGE_VAR``; its position
-    in the list is found dynamically.
+    ``_pybamm_output_vars`` must contain a terminal-voltage entry — either the
+    canonical ``"Terminal voltage [V]"`` or any alias in
+    ``_VOLTAGE_VAR_CANDIDATES``; the actual name is resolved against the built
+    model at construction time.
     """
 
     _thermal_option: str = ""
