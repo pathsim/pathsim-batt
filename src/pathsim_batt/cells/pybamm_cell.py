@@ -161,6 +161,13 @@ def _build_simulation(
         set_initial_state(initial_soc, sim.parameter_values)
         sim.build(inputs=_DEFAULT_INPUTS)
     elif isinstance(model, pybamm.lead_acid.BaseModel):
+        if initial_soc != 1.0:
+            raise ValueError(
+                "initial_soc is not supported for lead-acid models: PyBaMM's "
+                "lead-acid parameter sets do not include the electrode OCP data "
+                "required to map a target SoC to initial stoichiometries.  "
+                "The initial state is always determined by the parameter values."
+            )
         sim.build(inputs=_DEFAULT_INPUTS)
     else:
         sim.build(initial_soc=initial_soc, inputs=_DEFAULT_INPUTS)
@@ -251,8 +258,8 @@ class _CellBase(DynamicalSystem):
             raise NotImplementedError(
                 f"{type(self).__name__}: the supplied PyBaMM model has "
                 f"{_probe['z'].numel()} algebraic variable(s) after discretisation "
-                "(DAE system). Only pure ODE models are supported. "
-                "Use SPMe or SPM instead of DFN."
+                "(DAE system). Only pure ODE models are supported by this block. "
+                "Use a CellCoSim* block for DAE models."
             )
 
         resolved_output_vars, soc_cap_var, soc_direct_var = _resolve_output_vars(

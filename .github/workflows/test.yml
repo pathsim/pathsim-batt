@@ -37,8 +37,8 @@ jobs:
           - {python-version: "3.13", pybamm-version: "26.4"}
           - {python-version: "3.14", pybamm-version: "26.4"}
           # Older PyBaMM versions against the latest Python only
-          - {python-version: "3.13", pybamm-version: "25.12"}
-          - {python-version: "3.13", pybamm-version: "26.3"}
+          - {python-version: "3.14", pybamm-version: "25.12"}
+          - {python-version: "3.14", pybamm-version: "26.3"}
 
     steps:
       - uses: actions/checkout@v4
