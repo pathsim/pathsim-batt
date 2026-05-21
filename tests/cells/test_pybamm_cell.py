@@ -248,6 +248,51 @@ class TestElectrical(unittest.TestCase):
             msg="T_cell input has no effect on terminal voltage",
         )
 
+    def test_initial_soc_reflected_in_output(self):
+        """Output SOC must match initial_soc=0.5 after 1 s at zero current."""
+        cell = CellElectrical(initial_soc=0.5)
+        sim = self._make_simulation(cell, current=0.0, T_cell=298.15)
+        sim.run(1)
+        self.assertAlmostEqual(
+            float(cell.outputs[2]),
+            0.5,
+            delta=0.01,
+            msg="Output SOC does not reflect initial_soc=0.5",
+        )
+
+    def test_soc_decrease_magnitude(self):
+        """Actual ΔSOC must match Coulombic prediction within 2 %.
+
+        SOC is computed from discharge capacity which is exactly Coulombic.
+        """
+        current = 5.0
+        duration = 360
+        dt = 10.0
+        cell = CellElectrical(initial_soc=1.0)
+        I_src = Constant(current)
+        T_src = Constant(298.15)
+        sim = Simulation(
+            blocks=[I_src, T_src, cell],
+            connections=[
+                Connection(I_src, cell["I"]),
+                Connection(T_src, cell["T_cell"]),
+            ],
+            dt=dt,
+            Solver=ESDIRK43,
+        )
+        sim.run(duration)
+        expected_delta = current * duration / 3600.0 / cell._q_nominal
+        actual_delta = 1.0 - float(cell.outputs[2])
+        self.assertAlmostEqual(
+            actual_delta,
+            expected_delta,
+            delta=expected_delta * 0.02,
+            msg=(
+                f"ΔSOC={actual_delta:.5f} deviates from Coulombic "
+                f"prediction {expected_delta:.5f} by more than 2 %"
+            ),
+        )
+
 
 class TestElectrothermal(unittest.TestCase):
     """Integration tests for CellElectrothermal — PathSim integrates the PyBaMM ODE."""
@@ -450,6 +495,23 @@ class TestCoSimulationElectrical(unittest.TestCase):
             float(V_hot),
             places=3,
             msg="T_cell input has no effect on terminal voltage",
+        )
+
+    def test_initial_soc_reflected_in_output(self):
+        """Output SOC must match initial_soc=0.5 after 1 s (shorter than one step).
+
+        When the elapsed time is shorter than the co-sim macro-step dt, the
+        block has not yet fired its discrete step and outputs remain at the
+        initial values — so SOC should equal the configured initial_soc.
+        """
+        cell = CellCoSimElectrical(initial_soc=0.5, dt=10.0)
+        sim = self._make_simulation(cell, current=0.0, T_cell=298.15)
+        sim.run(1)
+        self.assertAlmostEqual(
+            float(cell.outputs[2]),
+            0.5,
+            delta=0.01,
+            msg="Output SOC does not reflect initial_soc=0.5",
         )
 
 

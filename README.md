@@ -20,7 +20,7 @@
 
 ---
 
-PathSim-Batt extends the [PathSim](https://github.com/pathsim/pathsim) simulation framework with battery cell blocks using [PyBaMM](https://pybamm.org) as the electrochemical backend. All blocks follow the standard PathSim block interface and can be connected into simulation diagrams.
+PathSim-Batt extends the [PathSim](https://github.com/pathsim/pathsim) simulation framework with battery cell blocks backed by [PyBaMM](https://pybamm.org). All blocks follow the standard PathSim interface and can be wired into any simulation diagram.
 
 ## Install
 
@@ -28,54 +28,83 @@ PathSim-Batt extends the [PathSim](https://github.com/pathsim/pathsim) simulatio
 pip install pathsim-batt
 ```
 
-## Blocks
-
-| Block | Description | Key Parameters |
-|-------|-------------|----------------|
-| `CellElectrothermal` | Coupled electrical + thermal cell (PathSim integrates PyBaMM ODE incl. temperature) | `model`, `parameter_values`, `initial_soc` |
-| `CellElectrical` | Electrical only, isothermal; wire to `LumpedThermal` for external thermal coupling | `model`, `parameter_values`, `initial_soc` |
-| `CellCoSimElectrothermal` | Coupled electrical + thermal co-simulation cell (PyBaMM steps internally) | `model`, `parameter_values`, `initial_soc`, `dt` |
-| `CellCoSimElectrical` | Electrical co-simulation cell for external thermal coupling | `model`, `parameter_values`, `initial_soc`, `dt` |
-| `LumpedThermal` | Single-node thermal model for external thermal coupling | `mass`, `Cp`, `UA`, `T0` |
-
-## PyBaMM integration
-
-The cell blocks wrap [PyBaMM](https://pybamm.org) models behind the PathSim block interface.
-
-- `CellElectrothermal` / `CellElectrical` use PathSim monolithic integration (`DynamicalSystem`) and exported CasADi ODE right-hand sides.
-- `CellCoSimElectrothermal` / `CellCoSimElectrical` use periodic co-simulation (`Wrapper`) and call `pybamm.Simulation.step()` internally.
-
-Only models that yield a **pure ODE** after discretisation are supported by the monolithic blocks (`CellElectrothermal`, `CellElectrical`) — currently SPMe and SPM. Models such as DFN that produce a DAE system (algebraic variables) will raise `NotImplementedError` there.
-
-For DAE models (e.g. DFN), use the co-simulation blocks (`CellCoSimElectrothermal`, `CellCoSimElectrical`).
-
-- **ODE-type PyBaMM models** (SPMe, SPM) can be injected via the `model` parameter
-- **Any parameter set** can be used via `parameter_values` (defaults to `Chen2020`)
-- **Immediate initialisation** — the PyBaMM model is discretised during block construction
+## Quick start
 
 ```python
 import pybamm
+from pathsim import Connection, Simulation
+from pathsim.blocks import Constant
+from pathsim.solvers import ESDIRK43
+from pathsim_batt import CellElectrothermal
 
-model  = pybamm.lithium_ion.SPMe(options={"thermal": "lumped"})
-params = pybamm.ParameterValues("Mohtat2020")
-cell   = CellElectrothermal(model=model, parameter_values=params)
+cell = CellElectrothermal(initial_soc=1.0)   # defaults: SPMe + Chen2020
+I_src = Constant(5.0)                         # 5 A discharge
+T_src = Constant(298.15)                      # 25 °C ambient
 
-# DAE example (DFN): use co-simulation mode
-dfn_cell = CellCoSimElectrothermal(
-  model=pybamm.lithium_ion.DFN(options={"thermal": "lumped"}),
-  parameter_values=params,
-  dt=0.1,
+sim = Simulation(
+    blocks=[I_src, T_src, cell],
+    connections=[Connection(I_src, cell["I"]), Connection(T_src, cell["T_amb"])],
+    dt=1.0,
+    Solver=ESDIRK43,
 )
+sim.run(3600)
+print(f"V = {cell.outputs[0]:.3f} V  T = {cell.outputs[1]:.1f} K  SOC = {cell.outputs[3]:.3f}")
 ```
 
-## Thermal coupling modes
+## Choosing a block
 
-| Mode | Block | Owns cell temperature | Use when |
+Two decisions determine the right block: **thermal ownership** and **integration strategy**.
+
+| Block | Thermal | Strategy | Use when |
 |---|---|---|---|
-| Internal | `CellElectrothermal` | PyBaMM | Single-cell simulations, quick setup |
-| External | `CellElectrical` + `LumpedThermal` | PathSim | Multi-cell packs, custom cooling models |
-| Co-sim internal | `CellCoSimElectrothermal` | PyBaMM | DAE models (e.g. DFN), mixed-solver workflows |
-| Co-sim external | `CellCoSimElectrical` + `LumpedThermal` | PathSim | DAE models with external thermal network |
+| `CellElectrothermal` | PyBaMM (internal) | Monolithic ODE | Single cell, coupled electro-thermal, ODE model |
+| `CellElectrical` + `LumpedThermal` | PathSim (external) | Monolithic ODE | Pack-level, custom cooling, ODE model |
+| `CellCoSimElectrothermal` | PyBaMM (internal) | Co-simulation | DAE models (DFN, lead_acid.Full), mixed solvers |
+| `CellCoSimElectrical` + `LumpedThermal` | PathSim (external) | Co-simulation | DAE models with external thermal network |
+
+`LumpedThermal` is a single-node thermal block (`mass`, `Cp`, `UA`, `T0`) that receives `Q_dot` from a `CellElectrical` block and feeds back cell temperature.
+
+## PyBaMM model compatibility
+
+Thermal sub-model and heat-source options are injected automatically — pass the bare model class with no `options=`.
+
+| PyBaMM model | Default parameter set | `CellElectrical` | `CellElectrothermal` | `CellCoSimElectrical` | `CellCoSimElectrothermal` |
+|---|---|:---:|:---:|:---:|:---:|
+| `lithium_ion.SPM` | `Chen2020` | ✅ | ✅ | ✅ | ✅ |
+| `lithium_ion.SPMe` | `Chen2020` | ✅ | ✅ | ✅ | ✅ |
+| `lithium_ion.DFN` | `Chen2020` | ❌ DAE | ❌ DAE | ✅ | ✅ |
+| `lead_acid.LOQS` | `Sulzer2019` | ✅ | ✅ | ✅ ¹ | ✅ ¹ |
+| `lead_acid.Full` | `Sulzer2019` | ❌ DAE | ❌ DAE | ✅ | ✅ |
+| `equivalent_circuit.Thevenin` | `ECM_Example` | ✅ | ✅ | ✅ ² | ✅ ² |
+
+¹ Pass `pybamm_solver=pybamm.CasadiSolver(mode="safe")` — the default `IDAKLUSolver` requires a Jacobian that ODE models do not provide.
+
+² `initial_soc=1.0` fails because PyBaMM requires event values to be strictly positive at `t=0`; the "Maximum SoC" event is zero exactly at full charge. Any value below 1.0 (e.g. `initial_soc=0.99`) works.
+
+```python
+import pybamm
+from pathsim_batt import CellElectrothermal, CellCoSimElectrical
+
+# Custom chemistry / parameter set
+cell = CellElectrothermal(
+    model=pybamm.lithium_ion.SPMe(),
+    parameter_values=pybamm.ParameterValues("Mohtat2020"),
+)
+
+# Lead-acid via co-simulation (DAE model)
+cell = CellCoSimElectrical(
+    model=pybamm.lead_acid.Full(),
+    parameter_values=pybamm.ParameterValues("Sulzer2019"),
+    dt=1.0,
+)
+
+# Equivalent circuit model
+cell = CellElectrical(
+    model=pybamm.equivalent_circuit.Thevenin(),
+    parameter_values=pybamm.ParameterValues("ECM_Example"),
+    initial_soc=0.9,
+)
+```
 
 ## License
 
