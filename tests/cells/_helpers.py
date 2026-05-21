@@ -98,7 +98,11 @@ def run_cosim_electrical(
     if pybamm_solver is not None:
         kwargs["pybamm_solver"] = pybamm_solver
     cell = CellCoSimElectrical(
-        model=model, parameter_values=pv, dt=cosim_dt, initial_soc=initial_soc, **kwargs
+        model=model,
+        parameter_values=pv,
+        dt=cosim_dt,
+        initial_soc=initial_soc,
+        **kwargs,
     )
     I_src = Constant(current)
     T_src = Constant(t_cell)
@@ -129,7 +133,11 @@ def run_cosim_electrothermal(
     if pybamm_solver is not None:
         kwargs["pybamm_solver"] = pybamm_solver
     cell = CellCoSimElectrothermal(
-        model=model, parameter_values=pv, dt=cosim_dt, initial_soc=initial_soc, **kwargs
+        model=model,
+        parameter_values=pv,
+        dt=cosim_dt,
+        initial_soc=initial_soc,
+        **kwargs,
     )
     I_src = Constant(current)
     T_src = Constant(t_amb)

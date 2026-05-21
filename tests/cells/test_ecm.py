@@ -5,8 +5,9 @@ ECM_Example cutoffs: lower 3.2 V, upper 4.2 V, nominal capacity 100 A·h.
 ECM's reversible heat term can be negative (entropy effect), so Q_dot is
 not constrained to be non-negative in the smoke tests.
 
-Co-simulation blocks are started at SOC=0.9 to avoid PyBaMM's internal
-"Maximum SoC" event firing immediately at the upper boundary.
+Co-simulation blocks are started at SOC=0.99 to avoid PyBaMM's internal
+"Maximum SoC" event: the event value is zero at exactly SOC=1.0, which
+the solver requires to be strictly positive at t=0.
 """
 
 import unittest
@@ -58,7 +59,7 @@ class TestECM(unittest.TestCase):
         )
 
     def test_cosim_electrical_smoke(self):
-        # Start at 0.9: PyBaMM's Maximum-SoC event fires if initial == upper boundary.
+        # Start at 0.99: PyBaMM's Maximum-SoC event fires at exactly SOC=1.0.
         cell = run_cosim_electrical(
             self._model(), self.pv, current=10.0, initial_soc=0.99
         )

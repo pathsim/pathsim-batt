@@ -147,9 +147,11 @@ def _inject_thermal_options(
     themselves — the block injects it automatically.
 
     Models that already carry the required options are returned unchanged.
-    Models whose constructor does not accept the given options (e.g. ECM,
-    which has no ``"thermal"`` option) are returned unchanged with a
-    ``UserWarning``.
+    Models that have no ``"thermal"`` key in their options at all (e.g. ECM,
+    which manages temperature internally) are skipped silently — injection
+    does not apply to them.  Models that expose ``"thermal"`` but whose
+    constructor rejects the specific option values emit a ``UserWarning``
+    and are returned unchanged.
     """
     if not required_options:
         return model
