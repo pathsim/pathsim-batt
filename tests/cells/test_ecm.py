@@ -60,7 +60,7 @@ class TestECM(unittest.TestCase):
     def test_cosim_electrical_smoke(self):
         # Start at 0.9: PyBaMM's Maximum-SoC event fires if initial == upper boundary.
         cell = run_cosim_electrical(
-            self._model(), self.pv, current=10.0, initial_soc=0.9
+            self._model(), self.pv, current=10.0, initial_soc=0.99
         )
         assert_electrical_outputs(
             self, cell, self.v_lo, self.v_hi, check_q_dot_nonneg=False
@@ -68,7 +68,7 @@ class TestECM(unittest.TestCase):
 
     def test_cosim_electrothermal_smoke(self):
         cell = run_cosim_electrothermal(
-            self._model(), self.pv, current=10.0, initial_soc=0.9
+            self._model(), self.pv, current=10.0, initial_soc=0.99
         )
         assert_electrothermal_outputs(
             self, cell, self.v_lo, self.v_hi, check_q_dot_nonneg=False

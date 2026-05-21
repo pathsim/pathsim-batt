@@ -133,6 +133,47 @@ def _detect_soc_direct_scale(
     return 1.0 / 100.0 if raw > 1.0 else 1.0
 
 
+def _inject_thermal_options(
+    model: pybamm.BaseBatteryModel,
+    required_options: dict[str, str],
+) -> pybamm.BaseBatteryModel:
+    """Return *model* with *required_options* merged into its options if needed.
+
+    Handles both the thermal sub-model selection (``"thermal": "isothermal"``
+    or ``"lumped"``) and ancillary flags such as
+    ``"calculate heat source for isothermal models": "true"``.  This means
+    users can pass a plain ``pybamm.lead_acid.LOQS()`` to
+    ``CellElectrothermal`` without having to specify ``thermal='lumped'``
+    themselves — the block injects it automatically.
+
+    Models that already carry the required options are returned unchanged.
+    Models whose constructor does not accept the given options (e.g. ECM,
+    which has no ``"thermal"`` option) are returned unchanged with a
+    ``UserWarning``.
+    """
+    if not required_options:
+        return model
+    # Models that have no "thermal" key in their options (e.g. ECM) manage
+    # temperature through their own internal mechanism and do not use PyBaMM's
+    # thermal sub-model system.  Injection is not applicable; skip silently.
+    if "thermal" in required_options and "thermal" not in model.options:
+        return model
+    if all(model.options.get(k) == v for k, v in required_options.items()):
+        return model
+    try:
+        return type(model)(options={**dict(model.options), **required_options})
+    except (pybamm.OptionError, TypeError):
+        import warnings
+
+        warnings.warn(
+            f"{type(model).__name__} does not support options {required_options}; "
+            "thermal behaviour may be incorrect.",
+            UserWarning,
+            stacklevel=4,
+        )
+        return model
+
+
 def _build_simulation(
     sim: pybamm.Simulation,
     model: pybamm.BaseBatteryModel,
@@ -219,6 +260,11 @@ class _CellBase(DynamicalSystem):
         if model is None:
             model = pybamm.lithium_ion.SPMe(
                 options={"thermal": self._thermal_option, **self._thermal_extra_options}
+            )
+        else:
+            model = _inject_thermal_options(
+                model,
+                {"thermal": self._thermal_option, **self._thermal_extra_options},
             )
 
         self._parameter_values = _prepare_parameter_values(parameter_values)
@@ -394,6 +440,11 @@ class _CoSimCellBase(Wrapper):
         if model is None:
             model = pybamm.lithium_ion.SPMe(
                 options={"thermal": self._thermal_option, **self._thermal_extra_options}
+            )
+        else:
+            model = _inject_thermal_options(
+                model,
+                {"thermal": self._thermal_option, **self._thermal_extra_options},
             )
 
         self._model = model

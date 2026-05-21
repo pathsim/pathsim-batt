@@ -45,15 +45,15 @@ class TestLeadAcidLOQS(unittest.TestCase):
         self.v_lo = float(self.pv["Lower voltage cut-off [V]"])
         self.v_hi = float(self.pv["Upper voltage cut-off [V]"])
 
-    def _model(self, thermal="isothermal"):
-        return pybamm.lead_acid.LOQS(options={"thermal": thermal})
+    def _model(self):
+        return pybamm.lead_acid.LOQS()
 
     def test_electrical_smoke(self):
         cell = run_electrical(self._model(), self.pv, current=17.0)
         assert_electrical_outputs(self, cell, self.v_lo, self.v_hi)
 
     def test_electrothermal_smoke(self):
-        cell = run_electrothermal(self._model("lumped"), self.pv, current=17.0)
+        cell = run_electrothermal(self._model(), self.pv, current=17.0)
         assert_electrothermal_outputs(self, cell, self.v_lo, self.v_hi)
 
     def test_cosim_electrical_smoke(self):
@@ -83,7 +83,7 @@ class TestLeadAcidLOQS(unittest.TestCase):
     def test_cosim_electrothermal_smoke(self):
         solver = pybamm.CasadiSolver(mode="safe")
         cell = CellCoSimElectrothermal(
-            model=self._model("lumped"),
+            model=self._model(),
             parameter_values=self.pv,
             pybamm_solver=solver,
             dt=1.0,
@@ -115,16 +115,10 @@ class TestLeadAcidLOQS(unittest.TestCase):
     def test_q_dot_nonzero_during_discharge(self):
         """Q_dot must be strictly positive during discharge (isothermal LOQS).
 
-        The heat-source calculation flag must be set explicitly when passing
-        an isothermal lead-acid model directly; without it Q_dot is always 0.
+        The block automatically injects the heat-source calculation flag into
+        isothermal models that lack it, so no manual option is needed.
         """
-        model = pybamm.lead_acid.LOQS(
-            options={
-                "thermal": "isothermal",
-                "calculate heat source for isothermal models": "true",
-            }
-        )
-        cell = run_electrical(model, self.pv, current=17.0, duration=60)
+        cell = run_electrical(self._model(), self.pv, current=17.0, duration=60)
         self.assertGreater(
             float(cell.outputs[1]),
             0.0,
@@ -135,7 +129,7 @@ class TestLeadAcidLOQS(unittest.TestCase):
         """A warmer ambient temperature must yield a higher output cell temperature."""
         solver = pybamm.CasadiSolver(mode="safe")
         cell_cold = run_electrothermal(
-            self._model("lumped"),
+            self._model(),
             self.pv,
             current=17.0,
             t_amb=278.15,
@@ -143,7 +137,7 @@ class TestLeadAcidLOQS(unittest.TestCase):
             pybamm_solver=solver,
         )
         cell_warm = run_electrothermal(
-            self._model("lumped"),
+            self._model(),
             self.pv,
             current=17.0,
             t_amb=318.15,
@@ -188,8 +182,8 @@ class TestLeadAcidFull(unittest.TestCase):
         self.v_lo = float(self.pv["Lower voltage cut-off [V]"])
         self.v_hi = float(self.pv["Upper voltage cut-off [V]"])
 
-    def _model(self, thermal="isothermal"):
-        return pybamm.lead_acid.Full(options={"thermal": thermal})
+    def _model(self):
+        return pybamm.lead_acid.Full()
 
     def test_monolithic_electrical_raises(self):
         """Full is a DAE — CellElectrical must raise NotImplementedError."""
@@ -199,14 +193,14 @@ class TestLeadAcidFull(unittest.TestCase):
     def test_monolithic_electrothermal_raises(self):
         """Full is a DAE — CellElectrothermal must raise NotImplementedError."""
         with self.assertRaises(NotImplementedError):
-            CellElectrothermal(model=self._model("lumped"), parameter_values=self.pv)
+            CellElectrothermal(model=self._model(), parameter_values=self.pv)
 
     def test_cosim_electrical_smoke(self):
         cell = run_cosim_electrical(self._model(), self.pv, current=17.0)
         assert_electrical_outputs(self, cell, self.v_lo, self.v_hi)
 
     def test_cosim_electrothermal_smoke(self):
-        cell = run_cosim_electrothermal(self._model("lumped"), self.pv, current=17.0)
+        cell = run_cosim_electrothermal(self._model(), self.pv, current=17.0)
         assert_electrothermal_outputs(self, cell, self.v_lo, self.v_hi)
 
 
