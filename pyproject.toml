@@ -27,7 +27,11 @@ classifiers = [
 ]
 dependencies = [
     "pathsim>=0.22",
-    "pybamm>=25.12",
+    # PyBaMM ships native code that can't be installed in Pyodide. The
+    # marker resolves to a normal eager install on every real platform and
+    # is skipped on Emscripten so the pure-Python parts of the toolbox
+    # (`pathsim_batt.thermal`) still install in the browser.
+    "pybamm>=25.12; sys_platform != 'emscripten'",
 ]
 
 [project.optional-dependencies]
