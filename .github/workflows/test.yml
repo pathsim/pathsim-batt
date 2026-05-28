@@ -31,14 +31,15 @@ jobs:
       matrix:
         include:
           # All Python versions against the latest PyBaMM
-          - {python-version: "3.10", pybamm-version: "26.4"}
-          - {python-version: "3.11", pybamm-version: "26.4"}
-          - {python-version: "3.12", pybamm-version: "26.4"}
-          - {python-version: "3.13", pybamm-version: "26.4"}
-          - {python-version: "3.14", pybamm-version: "26.4"}
+          - {python-version: "3.10", pybamm-version: "26.5"}
+          - {python-version: "3.11", pybamm-version: "26.5"}
+          - {python-version: "3.12", pybamm-version: "26.5"}
+          - {python-version: "3.13", pybamm-version: "26.5"}
+          - {python-version: "3.14", pybamm-version: "26.5"}
           # Older PyBaMM versions against the latest Python they support
           - {python-version: "3.13", pybamm-version: "25.12"}
           - {python-version: "3.14", pybamm-version: "26.3"}
+          - {python-version: "3.14", pybamm-version: "26.4"}
 
     steps:
       - uses: actions/checkout@v4
