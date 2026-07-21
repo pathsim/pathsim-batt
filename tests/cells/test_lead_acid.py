@@ -2,7 +2,7 @@
 
 Block / model matrix covered
 -----------------------------
-lead_acid.LOQS  — ODE → all 4 blocks
+lead_acid.LOQS  — ODE on PyBaMM < 26.7, DAE from 26.7 on → CoSim blocks only there
 lead_acid.Full  — DAE → CoSim blocks only
 """
 
@@ -29,15 +29,24 @@ from ._helpers import (
     run_electrothermal,
 )
 
+# PyBaMM 26.7 registers "voltage as a state" centrally on every
+# BaseBatteryModel (default "true"), and lead-acid models don't support
+# disabling it, so LOQS is a DAE from 26.7 on and can no longer run in the
+# monolithic (ODE-only) blocks.
+_PYBAMM_VERSION = tuple(int(x) for x in pybamm.__version__.split(".")[:2])
+_LOQS_IS_ODE = _PYBAMM_VERSION < (26, 7)
+
 # ---------------------------------------------------------------------------
 # lead_acid.LOQS  (ODE — all 4 blocks)
 # ---------------------------------------------------------------------------
 
 
 class TestLeadAcidLOQS(unittest.TestCase):
-    """lead_acid.LOQS with Sulzer2019 parameters (ODE model — all blocks).
+    """lead_acid.LOQS with Sulzer2019 parameters.
 
-    Sulzer2019 cutoffs: lower 1.75 V, upper 2.42 V, nominal capacity 17 A·h.
+    ODE model (all 4 blocks) on PyBaMM < 26.7; DAE (CoSim blocks only) from
+    26.7 on. Sulzer2019 cutoffs: lower 1.75 V, upper 2.42 V, nominal capacity
+    17 A·h.
     """
 
     def setUp(self):
@@ -48,17 +57,32 @@ class TestLeadAcidLOQS(unittest.TestCase):
     def _model(self):
         return pybamm.lead_acid.LOQS()
 
+    @unittest.skipUnless(_LOQS_IS_ODE, "LOQS is a DAE on PyBaMM >= 26.7")
     def test_electrical_smoke(self):
         cell = run_electrical(self._model(), self.pv, current=17.0)
         assert_electrical_outputs(self, cell, self.v_lo, self.v_hi)
 
+    @unittest.skipUnless(_LOQS_IS_ODE, "LOQS is a DAE on PyBaMM >= 26.7")
     def test_electrothermal_smoke(self):
         cell = run_electrothermal(self._model(), self.pv, current=17.0)
         assert_electrothermal_outputs(self, cell, self.v_lo, self.v_hi)
 
+    @unittest.skipIf(_LOQS_IS_ODE, "LOQS is a pure ODE on PyBaMM < 26.7")
+    def test_monolithic_electrical_raises(self):
+        """LOQS is a DAE on PyBaMM >= 26.7 — CellElectrical must raise."""
+        with self.assertRaises(NotImplementedError):
+            CellElectrical(model=self._model(), parameter_values=self.pv)
+
+    @unittest.skipIf(_LOQS_IS_ODE, "LOQS is a pure ODE on PyBaMM < 26.7")
+    def test_monolithic_electrothermal_raises(self):
+        """LOQS is a DAE on PyBaMM >= 26.7 — CellElectrothermal must raise."""
+        with self.assertRaises(NotImplementedError):
+            CellElectrothermal(model=self._model(), parameter_values=self.pv)
+
     def test_cosim_electrical_smoke(self):
-        # LOQS is an ODE; IDAKLUSolver (co-sim default) requires a Jacobian
-        # for ODE models and errors, so use CasadiSolver explicitly.
+        # On PyBaMM < 26.7, LOQS disables its Jacobian and IDAKLUSolver (the
+        # co-sim default) errors without one; CasadiSolver works on every
+        # pinned version (25.12-26.7), so use it explicitly here.
         solver = pybamm.CasadiSolver(mode="safe")
         cell = CellCoSimElectrical(
             model=self._model(),
@@ -102,16 +126,19 @@ class TestLeadAcidLOQS(unittest.TestCase):
         sim.run(2)
         assert_electrothermal_outputs(self, cell, self.v_lo, self.v_hi)
 
+    @unittest.skipUnless(_LOQS_IS_ODE, "LOQS is a DAE on PyBaMM >= 26.7")
     def test_electrical_soc_decreases(self):
         """SOC must decrease under discharge current."""
         cell = run_electrical(self._model(), self.pv, current=17.0, duration=60)
         self.assertLess(float(cell.outputs[2]), 1.0)
 
+    @unittest.skipUnless(_LOQS_IS_ODE, "LOQS is a DAE on PyBaMM >= 26.7")
     def test_cutoff_values_match_parameter_set(self):
         cell = CellElectrical(model=self._model(), parameter_values=self.pv)
         self.assertAlmostEqual(cell._v_lower, self.v_lo)
         self.assertAlmostEqual(cell._v_upper, self.v_hi)
 
+    @unittest.skipUnless(_LOQS_IS_ODE, "LOQS is a DAE on PyBaMM >= 26.7")
     def test_q_dot_nonzero_during_discharge(self):
         """Q_dot must be strictly positive during discharge (isothermal LOQS).
 
@@ -125,6 +152,7 @@ class TestLeadAcidLOQS(unittest.TestCase):
             "Q_dot is zero — thermal model may not compute heat sources",
         )
 
+    @unittest.skipUnless(_LOQS_IS_ODE, "LOQS is a DAE on PyBaMM >= 26.7")
     def test_tamb_affects_temperature(self):
         """A warmer ambient temperature must yield a higher output cell temperature."""
         solver = pybamm.CasadiSolver(mode="safe")
@@ -155,6 +183,7 @@ class TestLeadAcidLOQS(unittest.TestCase):
             ),
         )
 
+    @unittest.skipUnless(_LOQS_IS_ODE, "LOQS is a DAE on PyBaMM >= 26.7")
     def test_soc_scale_factor(self):
         """SOC must be well below 1.0 after sustained discharge.
 

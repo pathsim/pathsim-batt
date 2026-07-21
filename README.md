@@ -73,13 +73,15 @@ Thermal sub-model and heat-source options are injected automatically — pass th
 | `lithium_ion.SPM` | `Chen2020` | ✅ | ✅ | ✅ | ✅ |
 | `lithium_ion.SPMe` | `Chen2020` | ✅ | ✅ | ✅ | ✅ |
 | `lithium_ion.DFN` | `Chen2020` | ❌ DAE | ❌ DAE | ✅ | ✅ |
-| `lead_acid.LOQS` | `Sulzer2019` | ✅ | ✅ | ✅ ¹ | ✅ ¹ |
+| `lead_acid.LOQS` | `Sulzer2019` | ✅ ¹ | ✅ ¹ | ✅ ² | ✅ ² |
 | `lead_acid.Full` | `Sulzer2019` | ❌ DAE | ❌ DAE | ✅ | ✅ |
-| `equivalent_circuit.Thevenin` | `ECM_Example` | ✅ | ✅ | ✅ ² | ✅ ² |
+| `equivalent_circuit.Thevenin` | `ECM_Example` | ✅ | ✅ | ✅ ³ | ✅ ³ |
 
-¹ Pass `pybamm_solver=pybamm.CasadiSolver(mode="safe")` — the default `IDAKLUSolver` requires a Jacobian that ODE models do not provide.
+¹ PyBaMM < 26.7 only — from 26.7 on `LOQS` is a DAE, use a `CellCoSim*` block instead.
 
-² `initial_soc=1.0` fails because PyBaMM requires event values to be strictly positive at `t=0`; the "Maximum SoC" event is zero exactly at full charge. Any value below 1.0 (e.g. `initial_soc=0.99`) works.
+² PyBaMM < 26.7 only — pass `pybamm_solver=pybamm.CasadiSolver(mode="safe")`; the default `IDAKLUSolver` errors on `LOQS`. Fixed in 26.7.
+
+³ `initial_soc=1.0` fails because PyBaMM requires event values to be strictly positive at `t=0`; the "Maximum SoC" event is zero exactly at full charge. Any value below 1.0 (e.g. `initial_soc=0.99`) works.
 
 ```python
 import pybamm
