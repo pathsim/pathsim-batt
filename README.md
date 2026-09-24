@@ -77,7 +77,7 @@ Thermal sub-model and heat-source options are injected automatically — pass th
 | `lead_acid.Full` | `Sulzer2019` | ❌ DAE | ❌ DAE | ✅ | ✅ |
 | `equivalent_circuit.Thevenin` | `ECM_Example` | ✅ | ✅ | ✅ ³ | ✅ ³ |
 
-¹ PyBaMM < 26.7 only — from 26.7 on `LOQS` is a DAE, use a `CellCoSim*` block instead.
+¹ Not on PyBaMM 26.7 — there `LOQS` is a DAE, use a `CellCoSim*` block instead. It is an ODE again from 26.8 on.
 
 ² PyBaMM < 26.7 only — pass `pybamm_solver=pybamm.CasadiSolver(mode="safe")`; the default `IDAKLUSolver` errors on `LOQS`. Fixed in 26.7.
 
