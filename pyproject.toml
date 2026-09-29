@@ -32,7 +32,12 @@ dependencies = [
     # is skipped on Emscripten so the pure-Python parts of the toolbox
     # (`pathsim_batt.thermal`) still install in the browser.
     # Upper-bounded: each new minor release is vetted before being allowed.
-    "pybamm>=25.12,<26.9;sys_platform != 'emscripten'",
+    # Support policy: the latest 6 PyBaMM releases (~6 months). Adding a new
+    # release drops the oldest in the same change — raise the lower bound,
+    # remove its CI row and any workarounds only it needed. A version may be
+    # dropped earlier if it blocks a fix or feature. Raising the lower bound
+    # requires a minor (not patch) pathsim-batt release.
+    "pybamm>=26.4,<26.10; sys_platform != 'emscripten'",
 ]
 
 [project.optional-dependencies]
