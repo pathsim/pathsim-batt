@@ -13,8 +13,9 @@ import casadi
 import numpy as np
 import numpy.typing as npt
 import pybamm
-from pathsim.blocks import DynamicalSystem, Wrapper
+from pathsim.blocks import Block, SemiExplicitDAE, Wrapper
 from pathsim.exceptions import StopSimulation
+from pathsim.utils.register import Register
 
 # HELPERS =============================================================================
 
@@ -235,22 +236,21 @@ def _build_simulation(
 # BLOCKS ===============================================================================
 
 
-class _CellBase(DynamicalSystem):
+class _CellBase(SemiExplicitDAE):
     """Shared base for PyBaMM cell blocks.
 
-    Discretises the PyBaMM model at construction time and exposes its ODE
-    right-hand side to PathSim's numerical integrator via the ``DynamicalSystem``
-    interface.  The differential state vector of the discretised model becomes
-    the PathSim state; PathSim's chosen solver advances it in time.
+    Discretises the PyBaMM model at construction time and exposes it to
+    PathSim's numerical integrator via the ``SemiExplicitDAE`` interface.  The
+    differential state vector of the discretised model becomes the PathSim
+    state; PathSim's chosen solver advances it in time.  Algebraic variables
+    of models that result in a DAE system (e.g. DFN, lead_acid.Full) are
+    eliminated at every evaluation by solving the algebraic equations with
+    analytic CasADi Jacobians.  Pure ODE models (e.g. SPMe, SPM) have no
+    algebraic variables.
 
-    Only PyBaMM models that produce a pure ODE after discretisation are
-    supported (i.e. models with no algebraic variables, such as SPMe and SPM).
-    Models that result in a DAE system (e.g. DFN) are not supported and will
-    raise ``NotImplementedError`` at construction time.
-
-    Because the SPMe/SPM family of models is stiff, users should prefer an
-    implicit solver (e.g. ``ESDIRK43``, ``BDF``) when constructing the
-    PathSim ``Simulation``.
+    Because the discretised models are stiff, users should prefer an implicit
+    solver (e.g. ``ESDIRK43``, ``BDF``) when constructing the PathSim
+    ``Simulation``.
 
     Subclasses set ``_thermal_option`` and ``_pybamm_output_vars`` to select the
     thermal sub-model and define which PyBaMM variables map to the block's
@@ -271,6 +271,7 @@ class _CellBase(DynamicalSystem):
         parameter_values: pybamm.ParameterValues | None = None,
         initial_soc: float = 1.0,
         pybamm_solver: pybamm.BaseSolver | None = None,
+        tolerance: float = 1e-6,
     ) -> None:
         self._initial_soc = float(initial_soc)
 
@@ -313,22 +314,6 @@ class _CellBase(DynamicalSystem):
 
         available = sim.built_model.variables
 
-        # Early DAE check: probe with just the voltage variable so that the
-        # NotImplementedError is raised before variable-resolution, giving a
-        # cleaner error message for models that are DAE *and* also lack other
-        # required output variables (e.g. sodium_ion.BasicDFN).
-        _vol_var = _pick_var(available, _VOLTAGE_VAR_CANDIDATES, "terminal voltage")
-        _probe = sim.built_model.export_casadi_objects(
-            [_vol_var], input_parameter_order=list(_DEFAULT_INPUTS.keys())
-        )
-        if _probe["z"].numel() > 0:
-            raise NotImplementedError(
-                f"{type(self).__name__}: the supplied PyBaMM model has "
-                f"{_probe['z'].numel()} algebraic variable(s) after discretisation "
-                "(DAE system). Only pure ODE models are supported by this block. "
-                "Use a CellCoSim* block for DAE models."
-            )
-
         resolved_output_vars, soc_cap_var, soc_direct_var = _resolve_output_vars(
             self._pybamm_output_vars, available
         )
@@ -343,82 +328,109 @@ class _CellBase(DynamicalSystem):
             input_parameter_order=list(_DEFAULT_INPUTS.keys()),
         )
 
-        t_sym = casadi_objs["t"]
-        x_sym = casadi_objs["x"]
-        p_sym = casadi_objs["inputs"]
+        args = [
+            casadi_objs["t"],
+            casadi_objs["x"],
+            casadi_objs["z"],
+            casadi_objs["inputs"],
+        ]
+        n_x = casadi_objs["x"].numel()
+        jac_rhs = casadi_objs["jac_rhs"]
+        jac_alg = casadi_objs["jac_algebraic"]
 
-        rhs_fn = casadi.Function("rhs", [t_sym, x_sym, p_sym], [casadi_objs["rhs"]])
-        jac_fn = casadi.Function(
-            "jac_rhs", [t_sym, x_sym, p_sym], [casadi_objs["jac_rhs"]]
+        rhs_fn = casadi.Function("rhs", args, [casadi_objs["rhs"]])
+        alg_fn = casadi.Function("alg", args, [casadi_objs["algebraic"]])
+        jac_fns = [
+            casadi.Function(name, args, [expr])
+            for name, expr in [
+                ("jac_rhs_x", jac_rhs[:, :n_x]),
+                ("jac_rhs_z", jac_rhs[:, n_x:]),
+                ("jac_alg_x", jac_alg[:, :n_x]),
+                ("jac_alg_z", jac_alg[:, n_x:]),
+            ]
+        ]
+        out_fn = casadi.Function(
+            "out", args, [casadi_objs["variables"][n] for n in all_out_vars]
         )
 
-        out_var_fns = {}
-        for idx, var_name in enumerate(all_out_vars):
-            var_expr = casadi_objs["variables"][var_name]
-            out_var_fns[var_name] = casadi.Function(
-                f"outvar_{idx}", [t_sym, x_sym, p_sym], [var_expr]
-            )
-
-        self._casadi_rhs = rhs_fn
-        self._jac_rhs_eval = jac_fn
-        self._out_var_fcns = out_var_fns
+        self._resolved_output_vars = resolved_output_vars
+        self._soc_cap_var = soc_cap_var
+        self._out_fn = out_fn
         self._q_nominal = float(self._parameter_values["Nominal cell capacity [A.h]"])
-
-        q_nominal = self._q_nominal
-        initial_soc_val = float(initial_soc)
-        soc_direct_scale = _detect_soc_direct_scale(sim, soc_direct_var)
+        self._soc_direct_scale = _detect_soc_direct_scale(sim, soc_direct_var)
 
         def _pack(u):
             return casadi.DM([float(u[0]), float(u[1])])
 
-        def func_dyn(x, u, t):
-            xv = casadi.DM(x.reshape(-1, 1))
-            p = _pack(u)
-            return np.array(rhs_fn(t, xv, p)).flatten()
+        def func_dyn(x, z, u, t):
+            return np.array(rhs_fn(t, x, z, _pack(u))).ravel()
 
-        def jac_dyn(x, u, t):
-            xv = casadi.DM(x.reshape(-1, 1))
-            p = _pack(u)
-            return np.array(jac_fn(t, xv, p))
+        def func_alg(x, z, u, t):
+            return np.array(alg_fn(t, x, z, _pack(u))).ravel()
 
-        v_lower = self._v_lower
-        v_upper = self._v_upper
-        v_idx = self._v_idx
+        # CasADi's sparse export is much faster than a dense DM conversion
+        # for the large Jacobians of spatially resolved models.
+        def _jac(fn):
+            return lambda x, z, u, t: fn(t, x, z, _pack(u)).sparse().toarray()
 
-        def func_alg(x, u, t):
-            xv = casadi.DM(x.reshape(-1, 1))
-            p = _pack(u)
-            outputs = [float(out_var_fns[n](t, xv, p)) for n in resolved_output_vars]
-            if soc_cap_var is not None:
-                q_dis = float(out_var_fns[soc_cap_var](t, xv, p))
-                soc = max(0.0, min(1.0, initial_soc_val - q_dis / q_nominal))
-            else:
-                raw = float(out_var_fns[soc_direct_var](t, xv, p))
-                soc = max(0.0, min(1.0, raw * soc_direct_scale))
-            outputs.append(soc)
-            V = outputs[v_idx]
-            if V <= v_lower:
-                raise StopSimulation(f"undervoltage: V={V:.4f} V <= {v_lower} V")
-            if V >= v_upper:
-                raise StopSimulation(f"overvoltage: V={V:.4f} V >= {v_upper} V")
-            return np.array(outputs)
-
-        x0_fn = casadi.Function("x0", [p_sym], [casadi_objs["x0"]])
-
-        y0 = np.array(x0_fn(casadi.DM(list(_DEFAULT_INPUTS.values())))).flatten()
+        p0 = casadi.DM(list(_DEFAULT_INPUTS.values()))
+        x0 = casadi.Function("x0", [args[3]], [casadi_objs["x0"]])(p0)
+        z0 = casadi.Function("z0", [args[3]], [casadi_objs["z0"]])(p0)
 
         super().__init__(
             func_dyn=func_dyn,
             func_alg=func_alg,
-            initial_value=y0,
-            jac_dyn=jac_dyn,
+            initial_value=np.array(x0).ravel(),
+            z0=np.array(z0).ravel(),
+            jac_dyn_x=_jac(jac_fns[0]),
+            jac_dyn_z=_jac(jac_fns[1]),
+            jac_alg_x=_jac(jac_fns[2]),
+            jac_z=_jac(jac_fns[3]),
+            tolerance=tolerance,
         )
+
+        # SemiExplicitDAE sizes its outputs to the stacked state [x, z]; this
+        # block exposes the cell outputs instead.
+        self.outputs = Register(
+            size=len(self.output_port_labels),
+            mapping=self.output_port_labels.copy(),
+        )
+
+    def _cell_outputs(self, x, z, u, t) -> npt.NDArray[np.float64]:
+        """Evaluate the output variables and the SOC at the given state."""
+        values = [float(v) for v in self._out_fn(t, x, z, casadi.DM(u[:2]))]
+        outputs = values[:-1]
+        if self._soc_cap_var is not None:
+            soc = self._initial_soc - values[-1] / self._q_nominal
+        else:
+            soc = values[-1] * self._soc_direct_scale
+        outputs.append(max(0.0, min(1.0, soc)))
+        return np.array(outputs)
+
+    def update(self, t: float) -> None:
+        """Eliminate the algebraic states and evaluate the cell outputs.
+
+        Raises ``StopSimulation`` when the terminal voltage leaves the
+        cut-off window of the parameter set.
+        """
+        x, u = self.engine.state, self.inputs.to_array()
+        self._z = self._solve_z(x, u, t)
+        outputs = self._cell_outputs(x, self._z, u, t)
+        self.outputs.update_from_array(outputs)
+        V = outputs[self._v_idx]
+        if V <= self._v_lower:
+            raise StopSimulation(f"undervoltage: V={V:.4f} V <= {self._v_lower} V")
+        if V >= self._v_upper:
+            raise StopSimulation(f"overvoltage: V={V:.4f} V >= {self._v_upper} V")
 
     def __len__(self) -> int:
         return len(self._pybamm_output_vars) + 1
 
     def reset(self) -> None:
-        super().reset()
+        # Bypass SemiExplicitDAE.reset, which writes the stacked state
+        # [x, z] to the outputs.
+        Block.reset(self)
+        self._z = self.z0.copy()
 
 
 class _CoSimCellBase(Wrapper):
@@ -607,12 +619,16 @@ class CellElectrical(_CellBase):
     """Cell block — electrical outputs only, external thermal coupling.
 
     PathSim integrates the electrochemical state via the discretised PyBaMM
-    ODE.  Temperature dynamics live outside this block: wire ``Q_dot`` to a
+    model.  Temperature dynamics live outside this block: wire ``Q_dot`` to a
     ``LumpedThermal`` (or similar) block and feed its temperature output back
     to ``T_cell``.
 
+    Models that result in a DAE system after discretisation (e.g. DFN,
+    lead_acid.Full) are supported; their algebraic variables are solved by
+    the block at every evaluation.
+
     .. note::
-        The SPMe/SPM ODE is stiff.  Use an implicit solver (e.g.
+        The discretised models are stiff.  Use an implicit solver (e.g.
         ``ESDIRK43``, ``BDF``) when constructing the PathSim
         ``Simulation`` to avoid prohibitively small step sizes.
 
@@ -628,6 +644,9 @@ class CellElectrical(_CellBase):
     pybamm_solver : pybamm.BaseSolver or None
         PyBaMM solver used only during model build / discretisation.
         Defaults to ``IDAKLUSolver()``.
+    tolerance : float
+        Convergence tolerance on the residual norm of the algebraic equations
+        of DAE models.  Default 1e-6.
 
     Inputs
     ------
@@ -656,13 +675,17 @@ class CellElectrothermal(_CellBase):
     """Cell block — coupled electrical and thermal model.
 
     PathSim integrates the full electrochemical + thermal state (via the
-    discretised PyBaMM ODE).  The cell temperature is part of the PyBaMM
+    discretised PyBaMM model).  The cell temperature is part of the PyBaMM
     state vector and is read back as output port ``T``.  Supply a
     time-varying ambient / coolant temperature via ``T_amb`` to couple to a
     pack-level thermal model.
 
+    Models that result in a DAE system after discretisation (e.g. DFN,
+    lead_acid.Full) are supported; their algebraic variables are solved by
+    the block at every evaluation.
+
     .. note::
-        The SPMe/SPM ODE is stiff.  Use an implicit solver (e.g.
+        The discretised models are stiff.  Use an implicit solver (e.g.
         ``ESDIRK43``, ``BDF``) when constructing the PathSim
         ``Simulation`` to avoid prohibitively small step sizes.
 
@@ -677,6 +700,9 @@ class CellElectrothermal(_CellBase):
     pybamm_solver : pybamm.BaseSolver or None
         PyBaMM solver used only during model build / discretisation.
         Defaults to ``IDAKLUSolver()``.
+    tolerance : float
+        Convergence tolerance on the residual norm of the algebraic equations
+        of DAE models.  Default 1e-6.
 
     Inputs
     ------
@@ -709,7 +735,8 @@ class CellCoSimElectrical(_CoSimCellBase):
     ``pybamm.Simulation.step()``. PathSim receives zero-order-held outputs
     between macro-steps.
 
-    This mode supports PyBaMM models that result in DAE systems (e.g. DFN).
+    PyBaMM's own solvers handle any PyBaMM model, including those that
+    result in DAE systems (e.g. DFN).
 
     Parameters
     ----------
@@ -745,7 +772,8 @@ class CellCoSimElectrothermal(_CoSimCellBase):
     ``pybamm.Simulation.step()``. PathSim receives zero-order-held outputs
     between macro-steps.
 
-    This mode supports PyBaMM models that result in DAE systems (e.g. DFN).
+    PyBaMM's own solvers handle any PyBaMM model, including those that
+    result in DAE systems (e.g. DFN).
 
     Parameters
     ----------

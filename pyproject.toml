@@ -26,7 +26,7 @@ classifiers = [
     "Topic :: Scientific/Engineering",
 ]
 dependencies = [
-    "pathsim>=0.22",
+    "pathsim>=0.26",
     # PyBaMM ships native code that can't be installed in Pyodide. The
     # marker resolves to a normal eager install on every real platform and
     # is skipped on Emscripten so the pure-Python parts of the toolbox
