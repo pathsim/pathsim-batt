@@ -83,7 +83,7 @@ class TestLeadAcidLOQS(unittest.TestCase):
     def test_cosim_electrical_smoke(self):
         # On PyBaMM < 26.7, LOQS disables its Jacobian and IDAKLUSolver (the
         # co-sim default) errors without one; CasadiSolver works on every
-        # pinned version (26.4-26.9), so use it explicitly here.
+        # pinned version (26.5-26.10), so use it explicitly here.
         solver = pybamm.CasadiSolver(mode="safe")
         cell = CellCoSimElectrical(
             model=self._model(),
