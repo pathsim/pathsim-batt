@@ -13,6 +13,8 @@ from pathsim_batt.cells import (
     CellElectrothermal,
 )
 
+from ._helpers import assert_electrothermal_outputs, run_electrical, run_electrothermal
+
 
 class TestPorts(unittest.TestCase):
     def test_electrical_input_labels(self):
@@ -71,11 +73,13 @@ class TestPorts(unittest.TestCase):
             self.assertIsInstance(cell.initial_value, np.ndarray)
             self.assertGreater(len(cell.initial_value), 1)
 
-    def test_has_casadi_rhs(self):
-        """CasADi RHS is compiled and callable at construction time."""
+    def test_rhs_matches_state_size(self):
+        """The reduced right-hand side returns one derivative per state."""
         for cls in (CellElectrical, CellElectrothermal):
             cell = cls()
-            self.assertIsNotNone(cell._casadi_rhs)
+            u = np.array([0.0, 298.15])
+            dx = cell.op_dyn(cell.initial_value, u, 0.0)
+            self.assertEqual(dx.shape, cell.initial_value.shape)
 
     def test_state_size_equals_differential_states_only(self):
         """State must contain only differential (x) variables, not algebraic (z)."""
@@ -108,27 +112,43 @@ class TestPorts(unittest.TestCase):
             expected_x_size = objs["x"].numel()
             self.assertEqual(len(cell.initial_value), expected_x_size)
 
-    def test_jac_dyn_is_square(self):
-        """jac_dyn must return a square (n×n) matrix where n is the state size."""
+    def test_jac_is_square(self):
+        """The reduced Jacobian must be a square (n×n) matrix, n the state size."""
         for cls in (CellElectrical, CellElectrothermal):
             cell = cls()
             n = len(cell.initial_value)
-            x = cell.initial_value
             u = np.array([0.0, 298.15])
-            J = cell.jac_dyn(x, u, 0.0)
+            J = cell.op_dyn.jac_x(cell.initial_value, u, 0.0)
             self.assertEqual(J.shape, (n, n))
 
-    def test_dfn_model_raises(self):
-        """DFN models (DAE after discretisation) must raise NotImplementedError."""
-        dfn = pybamm.lithium_ion.DFN(options={"thermal": "isothermal"})
-        with self.assertRaises(NotImplementedError):
-            CellElectrical(model=dfn)
+    def test_spme_has_no_algebraic_states(self):
+        self.assertEqual(len(CellElectrical().z0), 0)
 
-    def test_dfn_lumped_raises(self):
-        """DFN with lumped thermal also has algebraic variables and must raise."""
+    def test_dfn_supported(self):
+        """DFN (DAE after discretisation) has algebraic states and is supported."""
+        dfn = pybamm.lithium_ion.DFN(options={"thermal": "isothermal"})
+        cell = CellElectrical(model=dfn)
+        self.assertGreater(len(cell.z0), 0)
+        self.assertEqual(len(cell), 3)
+
+    def test_dfn_lumped_supported(self):
+        """DFN with lumped thermal is supported by the electrothermal block."""
         dfn = pybamm.lithium_ion.DFN(options={"thermal": "lumped"})
-        with self.assertRaises(NotImplementedError):
-            CellElectrothermal(model=dfn)
+        cell = CellElectrothermal(model=dfn)
+        self.assertGreater(len(cell.z0), 0)
+        self.assertEqual(len(cell), 4)
+
+    def test_outputs_sized_to_ports(self):
+        """Outputs are the cell ports, not the stacked state [x, z]."""
+        dfn = pybamm.lithium_ion.DFN(options={"thermal": "isothermal"})
+        cell = CellElectrical(model=dfn)
+        self.assertEqual(len(cell.outputs), 3)
+        cell.reset()
+        self.assertEqual(len(cell.outputs), 3)
+
+    def test_tolerance_passed_through(self):
+        self.assertEqual(CellElectrical().tolerance, 1e-6)
+        self.assertEqual(CellElectrical(tolerance=1e-8).tolerance, 1e-8)
 
     def test_dfn_cosim_supported(self):
         """DFN is supported by co-simulation blocks."""
@@ -144,7 +164,7 @@ class TestPorts(unittest.TestCase):
 
 
 class TestElectrical(unittest.TestCase):
-    """Integration tests for CellElectrical — PathSim integrates the PyBaMM ODE."""
+    """Integration tests for CellElectrical — PathSim integrates the PyBaMM model."""
 
     def _make_simulation(self, cell, current, T_cell):
         """Create a Simulation with the cell and constant inputs."""
@@ -394,6 +414,37 @@ class TestElectrothermal(unittest.TestCase):
             T_cell_hot_amb,
             msg="T_amb input has no effect on output cell temperature",
         )
+
+
+class TestDFN(unittest.TestCase):
+    """DFN (DAE) integrated by PathSim, compared against PyBaMM's own solver."""
+
+    def _reference_voltage(self, model, current, t_end):
+        pv = pybamm.ParameterValues("Chen2020")
+        pv["Current function [A]"] = current
+        sim = pybamm.Simulation(model, parameter_values=pv)
+        sol = sim.solve([0, t_end], initial_soc=1.0)
+        return float(sol["Voltage [V]"].entries[-1])
+
+    def test_electrical_matches_pybamm(self):
+        dfn = pybamm.lithium_ion.DFN()
+        cell = run_electrical(dfn, pybamm.ParameterValues("Chen2020"), 5.0, 298.15, 60)
+        V_ref = self._reference_voltage(dfn, 5.0, 60)
+        self.assertAlmostEqual(float(cell.outputs[0]), V_ref, delta=1e-3)
+        self.assertLess(float(cell.outputs[2]), 1.0)
+        self.assertGreater(float(cell.outputs[1]), 0.0)
+
+    def test_electrothermal_outputs_physical(self):
+        dfn = pybamm.lithium_ion.DFN()
+        pv = pybamm.ParameterValues("Chen2020")
+        cell = run_electrothermal(dfn, pv, 5.0, 298.15, 60)
+        assert_electrothermal_outputs(
+            self,
+            cell,
+            float(pv["Lower voltage cut-off [V]"]),
+            float(pv["Upper voltage cut-off [V]"]),
+        )
+        self.assertLess(float(cell.outputs[3]), 1.0)
 
 
 class TestCoSimulationElectrical(unittest.TestCase):
@@ -656,7 +707,7 @@ class TestTerminationEvents(unittest.TestCase):
     def test_non_cosim_stops_before_negative_voltage(self):
         """CellElectrical must stop automatically before V goes negative.
 
-        ``StopSimulation`` is raised from ``func_alg`` the moment voltage
+        ``StopSimulation`` is raised from ``update`` the moment voltage
         reaches the lower cut-off, so PathSim halts without any user wiring.
         """
         cell = CellElectrical(initial_soc=0.02)
