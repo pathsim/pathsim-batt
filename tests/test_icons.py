@@ -11,8 +11,10 @@ class TestIcons(unittest.TestCase):
 
     def test_blocks_have_icons(self):
         blocks = [
-            obj for obj in vars(pathsim_batt).values()
-            if isinstance(obj, type) and issubclass(obj, Block)
+            obj
+            for obj in vars(pathsim_batt).values()
+            if isinstance(obj, type)
+            and issubclass(obj, Block)
             and obj.__module__.startswith("pathsim_batt")
         ]
         self.assertGreater(len(blocks), 0)
