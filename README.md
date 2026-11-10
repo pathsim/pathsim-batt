@@ -59,14 +59,16 @@ Two decisions determine the right block: **thermal ownership** and **integration
 |---|---|---|---|
 | `CellElectrothermal` | PyBaMM (internal) | Monolithic | Single cell, coupled electro-thermal |
 | `CellElectrical` + `LumpedThermal` | PathSim (external) | Monolithic | Pack-level, custom cooling |
-| `CellCoSimElectrothermal` | PyBaMM (internal) | Co-simulation | PyBaMM's own solvers, mixed solvers |
-| `CellCoSimElectrical` + `LumpedThermal` | PathSim (external) | Co-simulation | PyBaMM's own solvers with external thermal network |
+| `CellCoSimElectrothermal` | PyBaMM (internal) | Co-simulation | Large models (e.g. DFN), mixed solvers |
+| `CellCoSimElectrical` + `LumpedThermal` | PathSim (external) | Co-simulation | Large models with external thermal network |
 
 `LumpedThermal` is a single-node thermal block (`mass`, `Cp`, `UA`, `T0`) that receives `Q_dot` from a `CellElectrical` block and feeds back cell temperature.
 
 ## PyBaMM models
 
 All blocks work with the standard PyBaMM battery models, e.g. `lithium_ion.SPM`, `SPMe`, `DFN`, `lead_acid.LOQS`, `lead_acid.Full` or `equivalent_circuit.Thevenin`. The model must provide the variables the block outputs (terminal voltage, heat generation and, for the electrothermal blocks, cell temperature); some minimal models such as `sodium_ion.BasicDFN` do not. Thermal sub-model and heat-source options are injected automatically — pass the bare model class with no `options=`.
+
+The monolithic blocks integrate the model with PathSim's solvers, which is fast for reduced models (SPM, SPMe, ECM) but slow for spatially resolved models such as `DFN`: a 10-minute discharge takes over a minute, compared with about a second in `CellCoSimElectrical` with a 10 s macro-step. For such models prefer the co-simulation blocks. In the monolithic blocks, `tolerance=1e-9` makes `DFN` about three times faster; `lead_acid.Full` needs the default `1e-6`.
 
 Known limitations of the co-simulation blocks:
 
@@ -83,7 +85,7 @@ cell = CellElectrothermal(
     parameter_values=pybamm.ParameterValues("Mohtat2020"),
 )
 
-# High-fidelity model
+# High-fidelity model (slow in the monolithic blocks, see above)
 cell = CellElectrical(
     model=pybamm.lithium_ion.DFN(),
     parameter_values=pybamm.ParameterValues("Chen2020"),
